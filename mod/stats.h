@@ -9,6 +9,7 @@
 #define LEVELDB_STATS_H
 
 
+#include <string>
 #include <cstdint>
 #include <map>
 #include <vector>

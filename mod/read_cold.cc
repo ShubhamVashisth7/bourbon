@@ -152,6 +152,7 @@ int main(int argc, char *argv[]) {
     vector<int> ycsb_is_write;
     //keys.reserve(100000000000 / adgMod::value_size);
     if (!input_filename.empty()) {
+        cout << "reading from: " << input_filename << endl;
         ifstream input(input_filename);
         string key;
         while (input >> key) {
@@ -273,6 +274,8 @@ int main(int argc, char *argv[]) {
             }
 
             // perform load
+            std::cout << "loading keys: " << keys.size() << std::endl;
+            int count = 0;
             for (int cut = 0; cut < chunks.size(); ++cut) {
                 for (int i = chunks[cut].first; i < chunks[cut].second; ++i) {
 
@@ -280,13 +283,14 @@ int main(int argc, char *argv[]) {
                     //cout << keys[i] << endl;
 
                     status = db->Put(write_options, keys[i], {values.data() + uniform_dist_value(e2), (uint64_t) adgMod::value_size});
-
+                    count++;
                     assert(status.ok() && "File Put Error");
                 }
             }
             adgMod::db->vlog->Sync();
             instance->PauseTimer(9, true);
             cout << "Put Complete" << endl;
+            cout << "Total Put: " << count << endl;
 
             keys.clear();
 
@@ -369,6 +373,7 @@ int main(int argc, char *argv[]) {
         // perform workloads according to given distribution, read-write percentage, YCSB workload. (If they are set.)
         instance->StartTimer(13);
         uint64_t write_i = 0;
+        cout << "running " << num_operations << " operations" << endl;
         for (int i = 0; i < num_operations; ++i) {
 
             if (start_new_event) {
@@ -378,6 +383,7 @@ int main(int argc, char *argv[]) {
 
             bool write = use_ycsb ? ycsb_is_write[i] > 0 : (i % mix_base) < num_mix;
             if (write) {
+                std::cout << "write " << i << endl;
                 // write
                 if (input_filename.empty()) {
                     // used for ycsb default
@@ -408,6 +414,7 @@ int main(int argc, char *argv[]) {
                 }
             } else {
                 // read
+                // cout << "read " << i << endl;
                 string value;
                 if (input_filename.empty()) {
                     // ycsb default

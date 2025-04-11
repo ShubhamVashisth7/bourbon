@@ -152,7 +152,7 @@ int main(int argc, char *argv[]) {
     vector<int> ycsb_is_write;
     //keys.reserve(100000000000 / adgMod::value_size);
     if (!input_filename.empty()) {
-        cout << "reading from: " << input_filename << endl;
+        cout << "reading " << input_filename << std::endl;
         ifstream input(input_filename);
         string key;
         while (input >> key) {
@@ -194,7 +194,7 @@ int main(int argc, char *argv[]) {
     string values(1024 * 1024, '0');
 
     if (copy_out) {
-        rc = system("sync; echo 3 | sudo tee /proc/sys/vm/drop_caches");
+        // rc = system("sync; echo 3 | sudo tee /proc/sys/vm/drop_caches");
     }
 
     if (num_mix > 1000) {
@@ -204,7 +204,7 @@ int main(int argc, char *argv[]) {
     
     for (size_t iteration = 0; iteration < num_iteration; ++iteration) {
         if (copy_out) {
-            rc = system("sudo fstrim -a -v");
+            // rc = system("sudo fstrim -a -v");
         }
 
         db_location = db_location_copy;
@@ -231,8 +231,8 @@ int main(int argc, char *argv[]) {
             // clear existing directory, clear page cache, trim SSD
             string command = "rm -rf " + db_location;
             rc = system(command.c_str());
-            rc = system("sudo fstrim -a -v");
-            rc = system("sync; echo 3 | sudo tee /proc/sys/vm/drop_caches");
+            // rc = system("sudo fstrim -a -v");
+            // rc = system("sync; echo 3 | sudo tee /proc/sys/vm/drop_caches");
             cout << "delete and trim complete" << endl;
 
             status = DB::Open(options, db_location, &db);
@@ -274,8 +274,7 @@ int main(int argc, char *argv[]) {
             }
 
             // perform load
-            std::cout << "loading keys: " << keys.size() << std::endl;
-            int count = 0;
+            std::cout << "inserting " << keys.size() << " keys into bourbon\n";
             for (int cut = 0; cut < chunks.size(); ++cut) {
                 for (int i = chunks[cut].first; i < chunks[cut].second; ++i) {
 
@@ -283,14 +282,11 @@ int main(int argc, char *argv[]) {
                     //cout << keys[i] << endl;
 
                     status = db->Put(write_options, keys[i], {values.data() + uniform_dist_value(e2), (uint64_t) adgMod::value_size});
-                    count++;
                     assert(status.ok() && "File Put Error");
                 }
             }
             adgMod::db->vlog->Sync();
             instance->PauseTimer(9, true);
-            cout << "Put Complete" << endl;
-            cout << "Total Put: " << count << endl;
 
             keys.clear();
 
@@ -495,8 +491,8 @@ int main(int argc, char *argv[]) {
                 start_new_event = true;
                 cout << (i + 1) / (num_operations / 10) << endl;
                 Version* current = adgMod::db->versions_->current();
-                printf("LevelSize %d %d %d %d %d %d\n", current->NumFiles(0), current->NumFiles(1), current->NumFiles(2), current->NumFiles(3),
-                       current->NumFiles(4), current->NumFiles(5));
+                // printf("LevelSize %d %d %d %d %d %d\n", current->NumFiles(0), current->NumFiles(1), current->NumFiles(2), current->NumFiles(3),
+                //        current->NumFiles(4), current->NumFiles(5));
             }
 
         }
@@ -510,24 +506,25 @@ int main(int argc, char *argv[]) {
             times[s].push_back(instance->ReportTime(s));
         }
         adgMod::db->WaitForBackground();
-        sleep(10);
+        // sleep(10);
 
 
+        // for (auto& event_array : events) {
+        //     for (Event* e : event_array) 
+        //     e->Report();
+        // }
 
-        for (auto& event_array : events) {
-            for (Event* e : event_array) e->Report();
-        }
+        // for (Counter& c : levelled_counters) 
+        // c.Report();
 
-        for (Counter& c : levelled_counters) c.Report();
+        // file_data->Report();
 
-        file_data->Report();
+        // for (auto it : file_stats) {
+            // printf("FileStats %d %d %lu %lu %u %u %lu %d\n", it.first, it.second.level, it.second.start,
+            //     it.second.end, it.second.num_lookup_pos, it.second.num_lookup_neg, it.second.size, it.first < file_data->watermark ? 0 : 1);
+        // }
 
-        for (auto it : file_stats) {
-            printf("FileStats %d %d %lu %lu %u %u %lu %d\n", it.first, it.second.level, it.second.start,
-                it.second.end, it.second.num_lookup_pos, it.second.num_lookup_neg, it.second.size, it.first < file_data->watermark ? 0 : 1);
-        }
-
-        adgMod::learn_cb_model->Report();
+        // adgMod::learn_cb_model->Report();
 
 
         delete db;
@@ -563,4 +560,14 @@ int main(int argc, char *argv[]) {
             printf("Timer %d MEAN: %lu, STDDEV: %f\n", s, (uint64_t) mean, stdev);
         }
     }
+
+    if (!times[4].empty()) {
+        uint64_t total_read_time = std::accumulate(times[4].begin(), times[4].end(), 0ULL);
+        uint64_t total_read_ops = num_iteration * num_operations; 
+        if (total_read_time > 0) {
+            double seconds = total_read_time / 1e9;  
+            double mops = (total_read_ops / seconds) / 1e6; 
+            printf("Read Throughput: %.5f Mops/s\n", mops);
+            }
+        }
 }

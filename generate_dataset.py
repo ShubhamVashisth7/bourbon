@@ -2,7 +2,7 @@
 file_path = "example_dataset.txt"
 
 with open(file_path, "w") as file:
-    for number in range(0, 100000000):
+    for number in range(1, 10000001):
         file.write(f"{number}\n")
 
 print("done.")

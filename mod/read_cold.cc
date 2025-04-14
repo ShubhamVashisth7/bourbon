@@ -25,7 +25,6 @@ using std::map;
 using std::ifstream;
 using std::string;
 
-int num_pairs_base = 1000;
 int mix_base = 20;
 
 
@@ -95,7 +94,7 @@ int main(int argc, char *argv[]) {
 
     cxxopts::Options commandline_options("leveldb read test", "Testing leveldb read performance.");
     commandline_options.add_options()
-            ("n,get_number", "the number of gets (to be multiplied by 1024)", cxxopts::value<int>(num_operations)->default_value("1000"))
+            ("n,get_number", "number of operations", cxxopts::value<int>(num_operations)->default_value("1000"))
             ("s,step", "the step of the loop of the size of db", cxxopts::value<float>(num_pair_step)->default_value("1"))
             ("i,iteration", "the number of iterations of a same size", cxxopts::value<int>(num_iteration)->default_value("1"))
             ("m,modification", "if set, run our modified version", cxxopts::value<int>(adgMod::MOD)->default_value("0"))
@@ -133,8 +132,7 @@ int main(int argc, char *argv[]) {
     }
 
     std::default_random_engine e1(0), e2(255), e3(0);
-    srand(0);
-    num_operations *= num_pairs_base;
+    srand(62);
     db_location_copy = db_location;
 
     adgMod::fd_limit = unlimit_fd ? 1024 * 1024 : 1024;
@@ -166,6 +164,12 @@ int main(int argc, char *argv[]) {
             keys.push_back(generate_key(to_string(udist_key(e2))));
         }
     }
+
+    cout << "sample keys: ";
+    for (int i = 0; i < 5; ++i)
+        cout << keys[i] << " ";
+    cout << endl;
+
 
     if (!distribution_filename.empty()) {
         use_distribution = true;
@@ -321,6 +325,12 @@ int main(int argc, char *argv[]) {
                 }
                 adgMod::key_size = (int) keys.front().size();
             }
+
+            cout << "sample keys: ";
+            for (int i = 0; i < 5; ++i)
+                cout << keys[i] << " ";
+            cout << endl;
+
             fresh_write = false;
         }
 
@@ -410,7 +420,6 @@ int main(int argc, char *argv[]) {
                 }
             } else {
                 // read
-                // cout << "read " << i << endl;
                 string value;
                 if (input_filename.empty()) {
                     // ycsb default
@@ -430,6 +439,7 @@ int main(int argc, char *argv[]) {
                         status = db->Get(read_options, generate_key(to_string(10000000000 + index)), &value);
                     } else {
                         // other
+                        cout << "Get op: " << i << "/" << num_operations << " | pos in array: " << index << " | key: " << key << endl;
                         status = db->Get(read_options, key, &value);
                     }
                     instance->PauseTimer(4);

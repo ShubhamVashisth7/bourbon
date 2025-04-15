@@ -149,22 +149,36 @@ int main(int argc, char *argv[]) {
     vector<uint64_t> distribution;
     vector<int> ycsb_is_write;
     //keys.reserve(100000000000 / adgMod::value_size);
-    if (!input_filename.empty()) {
-        cout << "reading " << input_filename << std::endl;
+    if (!input_filename.empty()) {        
         ifstream input(input_filename);
         string key;
         while (input >> key) {
-            string the_key = generate_key(key);
-            keys.push_back(std::move(the_key));
+            // string the_key = generate_key(key);
+            // keys.push_back(std::move(the_key));
+            keys.push_back(key);
         }
         //adgMod::key_size = (int) keys.front().size();
+        // uint64_t total_keys, *data;
+        // std::ifstream is(input_filename, std::ios::binary | std::ios::in);
+        // cout << "reading " << input_filename << std::endl;
+        // if (!is.is_open()) {
+        //     std::cout << input_filename << " does not exists" << std::endl;
+        //     exit(0);
+        // }
+        // is.read(reinterpret_cast<char*>(&total_keys), sizeof(uint64_t));
+        // data = new uint64_t[total_keys];
+        // is.read(reinterpret_cast<char*>(data), total_keys*sizeof(uint64_t));
+        // is.close();
+        // std::cout << "total keys: " << total_keys << std::endl;
+        // for (int i = 0; i < num_operations; ++i) 
+        //     keys.push_back(to_string(data[i]));
     } else {
         std::uniform_int_distribution<uint64_t> udist_key(0, 999999999999999);
         for (int i = 0; i < 10000000; ++i) {
             keys.push_back(generate_key(to_string(udist_key(e2))));
         }
     }
-
+    // keys.resize(num_operations);
     cout << "sample keys: ";
     for (int i = 0; i < 5; ++i)
         cout << keys[i] << " ";
@@ -226,7 +240,7 @@ int main(int argc, char *argv[]) {
         //options.comparator = new NumericalComparator;
         //adgMod::block_restart_interval = options.block_restart_interval = adgMod::MOD == 8 || adgMod::MOD == 7 ? 1 : adgMod::block_restart_interval;
         //read_options.fill_cache = true;
-        write_options.sync = false;
+        write_options.sync = true;
         instance->ResetAll();
 
         
@@ -313,19 +327,38 @@ int main(int argc, char *argv[]) {
             }
             cout << "Shutting down" << endl;
             adgMod::db->WaitForBackground();
-            delete db;
+            // delete db;
 
             //keys.reserve(100000000000 / adgMod::value_size);
             if (!input_filename.empty()) {
                 ifstream input(input_filename);
                 string key;
                 while (input >> key) {
-                    string the_key = generate_key(key);
-                    keys.push_back(std::move(the_key));
+                    // string the_key = generate_key(key);
+                    // keys.push_back(std::move(the_key));
+                    keys.push_back(key);
                 }
                 adgMod::key_size = (int) keys.front().size();
             }
 
+            // if (!input_filename.empty()) {
+            //     uint64_t total_keys, *data;
+            //     std::ifstream is(input_filename, std::ios::binary | std::ios::in);
+            //     cout << "reading " << input_filename << std::endl;
+            //     if (!is.is_open()) {
+            //         std::cout << input_filename << " does not exists" << std::endl;
+            //         exit(0);
+            //     }
+            //     is.read(reinterpret_cast<char*>(&total_keys), sizeof(uint64_t));
+            //     data = new uint64_t[total_keys];
+            //     is.read(reinterpret_cast<char*>(data), total_keys*sizeof(uint64_t));
+            //     is.close();
+            //     std::cout << "total keys: " << total_keys << std::endl;
+            //     for (int i = 0; i < num_operations; ++i) 
+            //         keys.push_back(to_string(data[i]));
+            // }
+
+            // keys.resize(num_operations);
             cout << "sample keys: ";
             for (int i = 0; i < 5; ++i)
                 cout << keys[i] << " ";
@@ -341,20 +374,21 @@ int main(int argc, char *argv[]) {
             string remove_command = "rm -rf " + db_location_mix;
             string copy_command = "cp -r " + db_location + " " + db_location_mix;
 
-            rc = system(remove_command.c_str());
-            rc = system(copy_command.c_str());
+            // rc = system(remove_command.c_str());
+            // rc = system(copy_command.c_str());
             db_location = db_location_mix;
         }
 
 
 
 
-        if (evict) rc = system("sync; echo 3 | sudo tee /proc/sys/vm/drop_caches");
-        (void) rc;
+        // if (evict) rc = system("sync; echo 3 | sudo tee /proc/sys/vm/drop_caches");
+        // (void) rc;
 
         cout << "Starting up" << endl;
-        status = DB::Open(options, db_location, &db);
-        adgMod::db->WaitForBackground();
+        // status = DB::Open(options, db_location, &db);
+        cout << "DB Opened" << endl;
+        // adgMod::db->WaitForBackground();
         assert(status.ok() && "Open Error");
 //            for (int s = 12; s < 20; ++s) {
 //                instance->ResetTimer(s);
@@ -439,8 +473,8 @@ int main(int argc, char *argv[]) {
                         status = db->Get(read_options, generate_key(to_string(10000000000 + index)), &value);
                     } else {
                         // other
-                        cout << "Get op: " << i << "/" << num_operations << " | pos in array: " << index << " | key: " << key << endl;
-                        status = db->Get(read_options, key, &value);
+                        // cout << "Get op: " << i << "/" << num_operations << " | pos in array: " << index << " | key: " << key << endl;
+                        status = db->Get(read_options, keys[index], &value);
                     }
                     instance->PauseTimer(4);
 

@@ -6,6 +6,7 @@
 #include "util.h"
 #include "learned_index.h"
 #include <x86intrin.h>
+#include <iostream>
 
 using std::to_string;
 
@@ -83,7 +84,11 @@ namespace adgMod {
 
 
     string generate_key(const string& key) {
+        // std::cout << "trying to generate string key: " << key << std::endl;
+        // std::cout << "key size: " << key_size << std::endl;
+        // std::cout << "key.length(): " << key.length() << std::endl;
         string result = string(key_size - key.length(), '0') + key;
+        // std::cout << "generated key: " << result << std::endl;
         return std::move(result);
     }
 

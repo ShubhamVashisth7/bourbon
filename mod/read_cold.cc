@@ -27,8 +27,6 @@ using std::string;
 
 int mix_base = 20;
 
-
-
 class NumericalComparator : public Comparator {
 public:
     NumericalComparator() = default;
@@ -45,7 +43,7 @@ public:
 };
 
 
-void PutAndPrefetch(int lower, int higher, vector<string>& keys) {
+/*void PutAndPrefetch(int lower, int higher, vector<string>& keys) {
     adgMod::Stats* instance = adgMod::Stats::GetInstance();
 
     Status status;
@@ -71,7 +69,7 @@ void PutAndPrefetch(int lower, int higher, vector<string>& keys) {
     instance->PauseTimer(10, true);
 
     //cout << "Prefetch Complete" << endl;
-};
+};*/
 
 enum LoadType {
     Ordered = 0,
@@ -89,7 +87,7 @@ int main(int argc, char *argv[]) {
     string db_location, profiler_out, input_filename, distribution_filename, ycsb_filename;
     bool print_single_timing, print_file_info, evict, unlimit_fd, use_distribution = false, pause, use_ycsb = false;
     bool change_level_load, change_file_load, change_level_learning, change_file_learning;
-    int load_type, insert_bound;
+    int load_type, insert_bound, seed;
     string db_location_copy;
 
     cxxopts::Options commandline_options("leveldb read test", "Testing leveldb read performance.");
@@ -99,7 +97,7 @@ int main(int argc, char *argv[]) {
             ("i,iteration", "the number of iterations of a same size", cxxopts::value<int>(num_iteration)->default_value("1"))
             ("m,modification", "if set, run our modified version", cxxopts::value<int>(adgMod::MOD)->default_value("0"))
             ("h,help", "print help message", cxxopts::value<bool>()->default_value("false"))
-            ("d,directory", "the directory of db", cxxopts::value<string>(db_location)->default_value("/mnt/ssd/testdb"))
+            ("d,directory", "the directory of db", cxxopts::value<string>(db_location)->default_value("/mnt/tmp/"))
             ("k,key_size", "the size of key", cxxopts::value<int>(adgMod::key_size)->default_value("8"))
             ("v,value_size", "the size of value", cxxopts::value<int>(adgMod::value_size)->default_value("8"))
             ("single_timing", "print the time of every single get", cxxopts::value<bool>(print_single_timing)->default_value("false"))
@@ -124,54 +122,44 @@ int main(int argc, char *argv[]) {
             ("p,pause", "pause between operation", cxxopts::value<bool>(pause)->default_value("false"))
             ("policy", "learn policy", cxxopts::value<int>(adgMod::policy)->default_value("0"))
             ("YCSB", "use YCSB trace", cxxopts::value<string>(ycsb_filename)->default_value(""))
-            ("insert", "insert new value", cxxopts::value<int>(insert_bound)->default_value("0"));
+            ("insert", "insert new value", cxxopts::value<int>(insert_bound)->default_value("0"))
+            ("seed", "seed", cxxopts::value<int>(seed)->default_value("62"));
     auto result = commandline_options.parse(argc, argv);
     if (result.count("help")) {
         printf("%s", commandline_options.help().c_str());
         exit(0);
     }
-
+    
+    srand(seed);
     std::default_random_engine e1(0), e2(255), e3(0);
-    srand(62);
     db_location_copy = db_location;
-
     adgMod::fd_limit = unlimit_fd ? 1024 * 1024 : 1024;
     adgMod::restart_read = true;
     adgMod::level_learning_enabled ^= change_level_learning;
     adgMod::file_learning_enabled ^= change_file_learning;
     adgMod::load_level_model ^= change_level_load;
     adgMod::load_file_model ^= change_file_load;
-
-   // adgMod::file_learning_enabled = false;
-
+    adgMod::file_learning_enabled = false;
 
     vector<string> keys;
     vector<uint64_t> distribution;
     vector<int> ycsb_is_write;
-    //keys.reserve(100000000000 / adgMod::value_size);
+
     if (!input_filename.empty()) {        
-        ifstream input(input_filename);
-        string key;
-        while (input >> key) {
-            // string the_key = generate_key(key);
-            // keys.push_back(std::move(the_key));
-            keys.push_back(key);
+        uint64_t total_keys, *data;
+        std::ifstream is(input_filename, std::ios::binary | std::ios::in);
+        cout << "reading " << input_filename << std::endl;
+        if (!is.is_open()) {
+            std::cout << input_filename << " does not exists" << std::endl;
+            exit(0);
         }
-        //adgMod::key_size = (int) keys.front().size();
-        // uint64_t total_keys, *data;
-        // std::ifstream is(input_filename, std::ios::binary | std::ios::in);
-        // cout << "reading " << input_filename << std::endl;
-        // if (!is.is_open()) {
-        //     std::cout << input_filename << " does not exists" << std::endl;
-        //     exit(0);
-        // }
-        // is.read(reinterpret_cast<char*>(&total_keys), sizeof(uint64_t));
-        // data = new uint64_t[total_keys];
-        // is.read(reinterpret_cast<char*>(data), total_keys*sizeof(uint64_t));
-        // is.close();
-        // std::cout << "total keys: " << total_keys << std::endl;
-        // for (int i = 0; i < num_operations; ++i) 
-        //     keys.push_back(to_string(data[i]));
+        is.read(reinterpret_cast<char*>(&total_keys), sizeof(uint64_t));
+        data = new uint64_t[total_keys];
+        is.read(reinterpret_cast<char*>(data), total_keys*sizeof(uint64_t));
+        is.close();
+        for (int i = 0; i < num_operations; ++i) 
+            keys.push_back(generate_key(to_string(data[i])));
+        adgMod::key_size = (int) keys.front().size();
     } else {
         std::uniform_int_distribution<uint64_t> udist_key(0, 999999999999999);
         for (int i = 0; i < 10000000; ++i) {
@@ -243,7 +231,6 @@ int main(int argc, char *argv[]) {
         write_options.sync = true;
         instance->ResetAll();
 
-        
         if (fresh_write && iteration == 0) {
             // Load DB
             // clear existing directory, clear page cache, trim SSD
@@ -259,7 +246,7 @@ int main(int argc, char *argv[]) {
 
             instance->StartTimer(9);
             // different load order
-            int cut_size = keys.size() / 100000;
+            int cut_size = std::max(1, (int)(keys.size() / 100000)); 
             std::vector<std::pair<int, int>> chunks;
             switch (load_type) {
                 case Ordered: {
@@ -292,13 +279,11 @@ int main(int argc, char *argv[]) {
             }
 
             // perform load
-            std::cout << "inserting " << keys.size() << " keys into bourbon\n";
+            std::cout << "inserting " << keys.size() << " keys\n";
             for (int cut = 0; cut < chunks.size(); ++cut) {
+                cout << "chunk inserted: " << cut+1 << "/" << cut_size << endl;
                 for (int i = chunks[cut].first; i < chunks[cut].second; ++i) {
-
-
-                    //cout << keys[i] << endl;
-
+                    // cout << "inserting: " << keys[i] << endl;
                     status = db->Put(write_options, keys[i], {values.data() + uniform_dist_value(e2), (uint64_t) adgMod::value_size});
                     assert(status.ok() && "File Put Error");
                 }
@@ -306,67 +291,24 @@ int main(int argc, char *argv[]) {
             adgMod::db->vlog->Sync();
             instance->PauseTimer(9, true);
 
-            keys.clear();
-
-            // reopen DB and do offline leraning
+            // do offline leraning
             if (print_file_info && iteration == 0) db->PrintFileInfo();
             adgMod::db->WaitForBackground();
-            delete db;
-            status = DB::Open(options, db_location, &db);
-            adgMod::db->WaitForBackground();
+            // delete db;
+            // status = DB::Open(options, db_location, &db);
+            // adgMod::db->WaitForBackground();
             if (adgMod::MOD == 6 || adgMod::MOD == 7) {
                 Version* current = adgMod::db->versions_->current();
-                
                 // level learning
                 for (int i = 1; i < config::kNumLevels; ++i) {
                     LearnedIndexData::Learn(new VersionAndSelf{current, adgMod::db->version_count, current->learned_index_data_[i].get(), i});
                 }
-
                 // file learning
                 current->FileLearn();
             }
-            cout << "Shutting down" << endl;
             adgMod::db->WaitForBackground();
-            // delete db;
-
-            //keys.reserve(100000000000 / adgMod::value_size);
-            if (!input_filename.empty()) {
-                ifstream input(input_filename);
-                string key;
-                while (input >> key) {
-                    // string the_key = generate_key(key);
-                    // keys.push_back(std::move(the_key));
-                    keys.push_back(key);
-                }
-                adgMod::key_size = (int) keys.front().size();
-            }
-
-            // if (!input_filename.empty()) {
-            //     uint64_t total_keys, *data;
-            //     std::ifstream is(input_filename, std::ios::binary | std::ios::in);
-            //     cout << "reading " << input_filename << std::endl;
-            //     if (!is.is_open()) {
-            //         std::cout << input_filename << " does not exists" << std::endl;
-            //         exit(0);
-            //     }
-            //     is.read(reinterpret_cast<char*>(&total_keys), sizeof(uint64_t));
-            //     data = new uint64_t[total_keys];
-            //     is.read(reinterpret_cast<char*>(data), total_keys*sizeof(uint64_t));
-            //     is.close();
-            //     std::cout << "total keys: " << total_keys << std::endl;
-            //     for (int i = 0; i < num_operations; ++i) 
-            //         keys.push_back(to_string(data[i]));
-            // }
-
-            // keys.resize(num_operations);
-            cout << "sample keys: ";
-            for (int i = 0; i < 5; ++i)
-                cout << keys[i] << " ";
-            cout << endl;
-
             fresh_write = false;
         }
-
 
         // for mix workloads, copy out the whole DB to preserve the original one
         if (copy_out) {
@@ -379,17 +321,13 @@ int main(int argc, char *argv[]) {
             db_location = db_location_mix;
         }
 
-
-
-
         // if (evict) rc = system("sync; echo 3 | sudo tee /proc/sys/vm/drop_caches");
         // (void) rc;
 
-        cout << "Starting up" << endl;
+       
         // status = DB::Open(options, db_location, &db);
-        cout << "DB Opened" << endl;
-        // adgMod::db->WaitForBackground();
-        assert(status.ok() && "Open Error");
+        adgMod::db->WaitForBackground();
+        // assert(status.ok() && "Open Error");
 //            for (int s = 12; s < 20; ++s) {
 //                instance->ResetTimer(s);
 //            }
@@ -480,9 +418,11 @@ int main(int argc, char *argv[]) {
 
                     //cout << "Get " << key << " : " << value << endl;
                     if (!status.ok()) {
-                        cout << key << " Not Found" << endl;
+                        cout << key << " absent" << endl;
                         //assert(status.ok() && "File Get Error");
                     }
+                    // else
+                    //     cout << key << " found" << endl;
                 }
             }
 
@@ -492,10 +432,10 @@ int main(int argc, char *argv[]) {
 //                else num_read += 1;
 //            }
 #endif
-
-
             if (pause) {
-                if ((i + 1) % (num_operations / 10000) == 0) ::usleep(800000);
+                if (num_operations >= 10000 && (i + 1) % (num_operations / 10000) == 0) {
+                    ::usleep(800000);
+                }
             }
 
             // collect data every 1/10 of the run
@@ -535,8 +475,8 @@ int main(int argc, char *argv[]) {
                 start_new_event = true;
                 cout << (i + 1) / (num_operations / 10) << endl;
                 Version* current = adgMod::db->versions_->current();
-                // printf("LevelSize %d %d %d %d %d %d\n", current->NumFiles(0), current->NumFiles(1), current->NumFiles(2), current->NumFiles(3),
-                //        current->NumFiles(4), current->NumFiles(5));
+                printf("LevelSize %d %d %d %d %d %d\n", current->NumFiles(0), current->NumFiles(1), current->NumFiles(2), current->NumFiles(3),
+                       current->NumFiles(4), current->NumFiles(5));
             }
 
         }
@@ -611,7 +551,7 @@ int main(int argc, char *argv[]) {
         if (total_read_time > 0) {
             double seconds = total_read_time / 1e9;  
             double mops = (total_read_ops / seconds) / 1e6; 
-            printf("Read Throughput: %.5f Mops/s\n", mops);
+            printf("Read Throughput: %.6f Mops/s\n", mops);
             }
         }
 }

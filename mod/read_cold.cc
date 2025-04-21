@@ -13,6 +13,7 @@
 #include "../db/version_set.h"
 #include <cmath>
 #include <random>
+#include <thread>
 
 using namespace leveldb;
 using namespace adgMod;
@@ -41,7 +42,6 @@ public:
     virtual void FindShortestSeparator(std::string* start, const Slice& limit) const { return; };
     virtual void FindShortSuccessor(std::string* key) const { return; };
 };
-
 
 /*void PutAndPrefetch(int lower, int higher, vector<string>& keys) {
     adgMod::Stats* instance = adgMod::Stats::GetInstance();
@@ -79,6 +79,12 @@ enum LoadType {
     RandomChunk = 4
 };
 
+uint64_t GenerateRandomIndex(uint64_t max_index) {
+    static std::default_random_engine generator(std::random_device{}());
+    static std::uniform_int_distribution<uint64_t> distribution(0, max_index - 1);
+    return distribution(generator);
+}
+
 int main(int argc, char *argv[]) {
     int rc;
     int num_operations, num_iteration, num_mix;
@@ -87,7 +93,7 @@ int main(int argc, char *argv[]) {
     string db_location, profiler_out, input_filename, distribution_filename, ycsb_filename;
     bool print_single_timing, print_file_info, evict, unlimit_fd, use_distribution = false, pause, use_ycsb = false;
     bool change_level_load, change_file_load, change_level_learning, change_file_learning;
-    int load_type, insert_bound, seed;
+    int load_type, insert_bound, num_threads, seed;
     string db_location_copy;
 
     cxxopts::Options commandline_options("leveldb read test", "Testing leveldb read performance.");
@@ -123,7 +129,8 @@ int main(int argc, char *argv[]) {
             ("policy", "learn policy", cxxopts::value<int>(adgMod::policy)->default_value("0"))
             ("YCSB", "use YCSB trace", cxxopts::value<string>(ycsb_filename)->default_value(""))
             ("insert", "insert new value", cxxopts::value<int>(insert_bound)->default_value("0"))
-            ("seed", "seed", cxxopts::value<int>(seed)->default_value("62"));
+            ("t,threads", "# threads", cxxopts::value<int>(num_threads)->default_value("1"))
+            ("seed", "seed", cxxopts::value<int>(seed)->default_value("1234"));
     auto result = commandline_options.parse(argc, argv);
     if (result.count("help")) {
         printf("%s", commandline_options.help().c_str());
@@ -139,7 +146,6 @@ int main(int argc, char *argv[]) {
     adgMod::file_learning_enabled ^= change_file_learning;
     adgMod::load_level_model ^= change_level_load;
     adgMod::load_file_model ^= change_file_load;
-    adgMod::file_learning_enabled = false;
 
     vector<string> keys;
     vector<uint64_t> distribution;
@@ -171,7 +177,6 @@ int main(int argc, char *argv[]) {
     for (int i = 0; i < 5; ++i)
         cout << keys[i] << " ";
     cout << endl;
-
 
     if (!distribution_filename.empty()) {
         use_distribution = true;
@@ -229,7 +234,7 @@ int main(int argc, char *argv[]) {
         //adgMod::block_restart_interval = options.block_restart_interval = adgMod::MOD == 8 || adgMod::MOD == 7 ? 1 : adgMod::block_restart_interval;
         //read_options.fill_cache = true;
         write_options.sync = true;
-        instance->ResetAll();
+        // instance->ResetAll();
 
         if (fresh_write && iteration == 0) {
             // Load DB
@@ -242,9 +247,7 @@ int main(int argc, char *argv[]) {
 
             status = DB::Open(options, db_location, &db);
             assert(status.ok() && "Open Error");
-
-
-            instance->StartTimer(9);
+            // instance->StartTimer(9);
             // different load order
             int cut_size = std::max(1, (int)(keys.size() / 100000)); 
             std::vector<std::pair<int, int>> chunks;
@@ -281,7 +284,8 @@ int main(int argc, char *argv[]) {
             // perform load
             std::cout << "inserting " << keys.size() << " keys\n";
             for (int cut = 0; cut < chunks.size(); ++cut) {
-                cout << "chunk inserted: " << cut+1 << "/" << cut_size << endl;
+                if ((cut+1) % 50 == 0)
+                    cout << "chunk inserted: " << cut+1 << "/" << cut_size << endl;
                 for (int i = chunks[cut].first; i < chunks[cut].second; ++i) {
                     // cout << "inserting: " << keys[i] << endl;
                     status = db->Put(write_options, keys[i], {values.data() + uniform_dist_value(e2), (uint64_t) adgMod::value_size});
@@ -289,7 +293,7 @@ int main(int argc, char *argv[]) {
                 }
             }
             adgMod::db->vlog->Sync();
-            instance->PauseTimer(9, true);
+            // instance->PauseTimer(9, true);
 
             // do offline leraning
             if (print_file_info && iteration == 0) db->PrintFileInfo();
@@ -324,7 +328,6 @@ int main(int argc, char *argv[]) {
         // if (evict) rc = system("sync; echo 3 | sudo tee /proc/sys/vm/drop_caches");
         // (void) rc;
 
-       
         // status = DB::Open(options, db_location, &db);
         adgMod::db->WaitForBackground();
         // assert(status.ok() && "Open Error");
@@ -348,150 +351,123 @@ int main(int argc, char *argv[]) {
         std::vector<uint64_t> detailed_times;
         bool start_new_event = true;
 
-        // perform workloads according to given distribution, read-write percentage, YCSB workload. (If they are set.)
-        instance->StartTimer(13);
+        // instance->StartTimer(13);
         uint64_t write_i = 0;
-        cout << "running " << num_operations << " operations" << endl;
-        for (int i = 0; i < num_operations; ++i) {
-
-            if (start_new_event) {
-                detailed_times.push_back(instance->GetTime());
-                start_new_event = false;
-            }
-
-            bool write = use_ycsb ? ycsb_is_write[i] > 0 : (i % mix_base) < num_mix;
-            if (write) {
-                std::cout << "write " << i << endl;
-                // write
-                if (input_filename.empty()) {
-                    // used for ycsb default
-                    instance->StartTimer(10);
-                    status = db->Put(write_options, generate_key(to_string(distribution[i])), {values.data() + uniform_dist_value(e3), (uint64_t) adgMod::value_size});
-                    instance->PauseTimer(10);
-                } else {
-                    uint64_t index;
-                    if (use_distribution) {
-                        index = distribution[i];
-                    } else if (load_type == 0) {
-                        index = write_i++ % keys.size();
-                    } else {
-                        index = uniform_dist_file(e1) % (keys.size() - 1);
+        std::shuffle(keys.begin(), keys.end(), std::default_random_engine(seed));
+        cout << "running " << num_operations << " operations with " << num_threads << " threads" << endl;
+        int ops_per_thread = num_operations / num_threads; 
+        cout << "ops_per_thread: " << ops_per_thread << endl;
+       
+        std::mutex cout_mutex;
+        auto start = std::chrono::high_resolution_clock::now();
+        int remaining_ops = num_operations % num_threads;
+        int keys_per_thread = keys.size() / num_threads;
+        int remaining_keys = keys.size() % num_threads;
+        std::vector<std::thread> threads;
+        int keys_start = 0;
+        for (int t = 0; t < num_threads; ++t) {
+            int chunk_keys = keys_per_thread + (t < remaining_keys ? 1 : 0);
+            int keys_end = keys_start + chunk_keys;
+            int thread_ops = ops_per_thread + (t < remaining_ops ? 1 : 0);
+            threads.emplace_back([&, keys_start, keys_end, thread_ops]() {
+                std::random_device rd;
+                std::mt19937_64 generator(rd());
+                std::uniform_int_distribution<uint64_t> dist(keys_start, keys_end - 1);
+                ReadOptions local_read_options = read_options;
+                for (int i = 0; i < thread_ops; ++i) {
+                    string value;
+                    uint64_t random_key = dist(generator);
+                    // instance->StartTimer(4);
+                    Status local_status = db->Get(local_read_options, keys[random_key], &value);
+                    // instance->PauseTimer(4);
+                    if (!local_status.ok() || value.size() != adgMod::value_size) {
+                        std::lock_guard<std::mutex> lock(cout_mutex);
+                        cout << keys[random_key] << " absent or corrupted" << endl;
                     }
-
-                    instance->StartTimer(10);
-                    if (use_ycsb && ycsb_is_write[i] == 2) {
-                        // ycsb insert
-                        status = db->Put(write_options, generate_key(to_string(10000000000 + index)), {values.data() + uniform_dist_value(e3), (uint64_t) adgMod::value_size});
-                    } else {
-                        // other write
-                        status = db->Put(write_options, keys[index], {values.data() + uniform_dist_value(e3), (uint64_t) adgMod::value_size});
-                    }
-                    instance->PauseTimer(10);
-                    assert(status.ok() && "Mix Put Error");
-                    //cout << index << endl;
                 }
-            } else {
-                // read
-                string value;
-                if (input_filename.empty()) {
-                    // ycsb default
-                    instance->StartTimer(4);
-                    status = db->Get(read_options, generate_key(to_string(distribution[i])), &value);
-                    instance->PauseTimer(4);
-                    if (!status.ok()) {
-                        cout << distribution[i] << " Not Found" << endl;
-                        //assert(status.ok() && "File Get Error");
-                    }
-                } else {
-                    uint64_t index = use_distribution ? distribution[i] : uniform_dist_file2(e2) % (keys.size() - 1);
-                    const string& key = keys[index];
-                    instance->StartTimer(4);
-                    if (insert_bound != 0 && index > insert_bound) {
-                        // read inserted key
-                        status = db->Get(read_options, generate_key(to_string(10000000000 + index)), &value);
-                    } else {
-                        // other
-                        // cout << "Get op: " << i << "/" << num_operations << " | pos in array: " << index << " | key: " << key << endl;
-                        status = db->Get(read_options, keys[index], &value);
-                    }
-                    instance->PauseTimer(4);
-
-                    //cout << "Get " << key << " : " << value << endl;
-                    if (!status.ok()) {
-                        cout << key << " absent" << endl;
-                        //assert(status.ok() && "File Get Error");
-                    }
-                    // else
-                    //     cout << key << " found" << endl;
-                }
-            }
-
-#ifdef RECORD_LEVEL_INFO
-//            if (i < 1100) {
-//                if (write) num_write += 1;
-//                else num_read += 1;
-//            }
-#endif
-            if (pause) {
-                if (num_operations >= 10000 && (i + 1) % (num_operations / 10000) == 0) {
-                    ::usleep(800000);
-                }
-            }
-
-            // collect data every 1/10 of the run
-            if ((i + 1) % (num_operations / 100) == 0) detailed_times.push_back(instance->GetTime());
-            if ((i + 1) % (num_operations / 10) == 0) {
-                int level_read = levelled_counters[0].Sum();
-                int file_read = levelled_counters[1].Sum();
-                int baseline_read = levelled_counters[2].Sum();
-                int succeeded_read = levelled_counters[3].NumSum();
-                int false_read = levelled_counters[4].NumSum();
-
-                compaction_counter_mutex.Lock();
-                int num_compaction = events[0].size();
-                compaction_counter_mutex.Unlock();
-                learn_counter_mutex.Lock();
-                int num_learn = events[1].size();
-                learn_counter_mutex.Unlock();
-
-                uint64_t read_time = instance->ReportTime(4);
-                uint64_t write_time = instance->ReportTime(10);
-                std::pair<uint64_t, uint64_t> time = {detailed_times.front(), detailed_times.back()};
-
-                events[2].push_back(new WorkloadEvent(time, level_read - last_level, file_read - last_file, baseline_read - last_baseline,
-                    succeeded_read - last_succeeded, false_read - last_false, num_compaction - last_compaction, num_learn - last_learn,
-                    read_time - last_read, write_time - last_write, std::move(detailed_times)));
-
-                last_level = level_read;
-                last_file = file_read;
-                last_baseline = baseline_read;
-                last_succeeded = succeeded_read;
-                last_false = false_read;
-                last_compaction = num_compaction;
-                last_learn = num_learn;
-                last_read = read_time;
-                last_write = write_time;
-                detailed_times.clear();
-                start_new_event = true;
-                cout << (i + 1) / (num_operations / 10) << endl;
-                Version* current = adgMod::db->versions_->current();
-                printf("LevelSize %d %d %d %d %d %d\n", current->NumFiles(0), current->NumFiles(1), current->NumFiles(2), current->NumFiles(3),
-                       current->NumFiles(4), current->NumFiles(5));
-            }
-
+            });
+            keys_start = keys_end;
         }
-        instance->PauseTimer(13, true);
+        for (auto& thread : threads) {
+            thread.join();
+        }    
+        auto end = std::chrono::high_resolution_clock::now();  
+        // for (int i = 0; i < num_operations; ++i) {
 
+        //     if (start_new_event) {
+        //         detailed_times.push_back(instance->GetTime());
+        //         start_new_event = false;
+        //     }
+
+        //     bool write = use_ycsb ? ycsb_is_write[i] > 0 : (i % mix_base) < num_mix;
+
+        //     if (write) { exit(0); } 
+        //     else {
+        //         // read
+        //         string value;
+        //         uint64_t random_key = GenerateRandomIndex(num_operations);
+        //         const string& key = keys[random_key];
+        //         instance->StartTimer(4);
+        //         // cout << "Get op: " << i << "/" << num_operations << " | pos in array: " << index << " | key: " << key << endl;
+        //         status = db->Get(read_options, keys[random_key], &value);
+        //         instance->PauseTimer(4);
+        //         if (!status.ok() || value.size() != value_size) { cout << key << " absent or curropted" << endl; }
+        //     }
+            
+            
+        //     // collect data every 1/10 of the run
+        //     /*if ((i + 1) % (num_operations / 100) == 0) detailed_times.push_back(instance->GetTime());
+        //     if ((i + 1) % (num_operations / 10) == 0) {
+        //         int level_read = levelled_counters[0].Sum();
+        //         int file_read = levelled_counters[1].Sum();
+        //         int baseline_read = levelled_counters[2].Sum();
+        //         int succeeded_read = levelled_counters[3].NumSum();
+        //         int false_read = levelled_counters[4].NumSum();
+
+        //         compaction_counter_mutex.Lock();
+        //         int num_compaction = events[0].size();
+        //         compaction_counter_mutex.Unlock();
+        //         learn_counter_mutex.Lock();
+        //         int num_learn = events[1].size();
+        //         learn_counter_mutex.Unlock();
+
+        //         uint64_t read_time = instance->ReportTime(4);
+        //         uint64_t write_time = instance->ReportTime(10);
+        //         std::pair<uint64_t, uint64_t> time = {detailed_times.front(), detailed_times.back()};
+
+        //         events[2].push_back(new WorkloadEvent(time, level_read - last_level, file_read - last_file, baseline_read - last_baseline,
+        //             succeeded_read - last_succeeded, false_read - last_false, num_compaction - last_compaction, num_learn - last_learn,
+        //             read_time - last_read, write_time - last_write, std::move(detailed_times)));
+
+        //         last_level = level_read;
+        //         last_file = file_read;
+        //         last_baseline = baseline_read;
+        //         last_succeeded = succeeded_read;
+        //         last_false = false_read;
+        //         last_compaction = num_compaction;
+        //         last_learn = num_learn;
+        //         last_read = read_time;
+        //         last_write = write_time;
+        //         detailed_times.clear();
+        //         start_new_event = true;
+        //         cout << (i + 1) / (num_operations / 10) << endl;
+        //         Version* current = adgMod::db->versions_->current();
+        //         printf("LevelSize %d %d %d %d %d %d\n", current->NumFiles(0), current->NumFiles(1), current->NumFiles(2), current->NumFiles(3),
+        //                current->NumFiles(4), current->NumFiles(5));
+        //     }
+        //     */
+        // }
+        
+
+        // instance->PauseTimer(13, true);
 
         // report various data after the run
-
-        instance->ReportTime();
-        for (int s = 0; s < times.size(); ++s) {
-            times[s].push_back(instance->ReportTime(s));
-        }
+        // instance->ReportTime();
+        // for (int s = 0; s < times.size(); ++s) {
+        //     times[s].push_back(instance->ReportTime(s));
+        // }
         adgMod::db->WaitForBackground();
         // sleep(10);
-
 
         // for (auto& event_array : events) {
         //     for (Event* e : event_array) 
@@ -509,49 +485,56 @@ int main(int argc, char *argv[]) {
         // }
 
         // adgMod::learn_cb_model->Report();
-
-
         delete db;
+
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+        double seconds = duration.count() / 1000000;
+        double throughput = num_operations / seconds;
+        
+        std::cout << "Threads: " << num_threads 
+                  << ", Operations: " << num_operations
+                  << ", Duration: " << seconds << " seconds"
+                  << ", Throughput: " << throughput/1e6 << " Mops/s" 
+                  << std::endl;
     }
 
     // print out averages
+    // for (int s = 0; s < times.size(); ++s) {
+    //     vector<uint64_t>& time = times[s];
+    //     vector<double> diff(time.size());
+    //     if (time.empty()) continue;
 
-    for (int s = 0; s < times.size(); ++s) {
-        vector<uint64_t>& time = times[s];
-        vector<double> diff(time.size());
-        if (time.empty()) continue;
+    //     double sum = std::accumulate(time.begin(), time.end(), 0.0);
+    //     double mean = sum / time.size();
+    //     std::transform(time.begin(), time.end(), diff.begin(), [mean] (double x) { return x - mean; });
+    //     double stdev = std::sqrt(std::inner_product(diff.begin(), diff.end(), diff.begin(), 0.0) / time.size());
 
-        double sum = std::accumulate(time.begin(), time.end(), 0.0);
-        double mean = sum / time.size();
-        std::transform(time.begin(), time.end(), diff.begin(), [mean] (double x) { return x - mean; });
-        double stdev = std::sqrt(std::inner_product(diff.begin(), diff.end(), diff.begin(), 0.0) / time.size());
+    //     printf("Timer %d MEAN: %lu, STDDEV: %f\n", s, (uint64_t) mean, stdev);
+    // }
 
-        printf("Timer %d MEAN: %lu, STDDEV: %f\n", s, (uint64_t) mean, stdev);
-    }
+    // if (num_iteration > 1) {
+    //     cout << "Data Without the First Item" << endl;
+    //     for (int s = 0; s < times.size(); ++s) {
+    //         vector<uint64_t>& time = times[s];
+    //         vector<double> diff(time.size() - 1);
+    //         if (time.empty()) continue;
 
-    if (num_iteration > 1) {
-        cout << "Data Without the First Item" << endl;
-        for (int s = 0; s < times.size(); ++s) {
-            vector<uint64_t>& time = times[s];
-            vector<double> diff(time.size() - 1);
-            if (time.empty()) continue;
+    //         double sum = std::accumulate(time.begin() + 1, time.end(), 0.0);
+    //         double mean = sum / (time.size() - 1);
+    //         std::transform(time.begin() + 1, time.end(), diff.begin(), [mean] (double x) { return x - mean; });
+    //         double stdev = std::sqrt(std::inner_product(diff.begin(), diff.end(), diff.begin(), 0.0) / time.size());
 
-            double sum = std::accumulate(time.begin() + 1, time.end(), 0.0);
-            double mean = sum / (time.size() - 1);
-            std::transform(time.begin() + 1, time.end(), diff.begin(), [mean] (double x) { return x - mean; });
-            double stdev = std::sqrt(std::inner_product(diff.begin(), diff.end(), diff.begin(), 0.0) / time.size());
+    //         printf("Timer %d MEAN: %lu, STDDEV: %f\n", s, (uint64_t) mean, stdev);
+    //     }
+    // }
 
-            printf("Timer %d MEAN: %lu, STDDEV: %f\n", s, (uint64_t) mean, stdev);
-        }
-    }
-
-    if (!times[4].empty()) {
-        uint64_t total_read_time = std::accumulate(times[4].begin(), times[4].end(), 0ULL);
-        uint64_t total_read_ops = num_iteration * num_operations; 
-        if (total_read_time > 0) {
-            double seconds = total_read_time / 1e9;  
-            double mops = (total_read_ops / seconds) / 1e6; 
-            printf("Read Throughput: %.6f Mops/s\n", mops);
-            }
-        }
+    // if (!times[4].empty()) {
+    //     uint64_t total_read_time = std::accumulate(times[4].begin(), times[4].end(), 0ULL);
+    //     uint64_t total_read_ops = num_iteration * num_operations; 
+    //     if (total_read_time > 0) {
+    //         double seconds = total_read_time / 1e9;  
+    //         double mops = (total_read_ops / seconds) / 1e6; 
+    //         printf("Read Throughput: %.6f Mops/s\n", mops);
+    //         }
+    //     }
 }

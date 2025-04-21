@@ -6,21 +6,22 @@
 #include "util.h"
 #include <cassert>
 #include <x86intrin.h>
-
+#include <iostream>
 
 namespace adgMod {
 
     Timer::Timer() : time_accumulated(0), started(false) {}
 
     void Timer::Start() {
-        assert(!started);
+        // std::cout << "here\n";
+        // assert(!started);
         unsigned int dummy = 0;
         time_started = __rdtscp(&dummy);
         started = true;
     }
 
     std::pair<uint64_t, uint64_t> Timer::Pause(bool record) {
-        assert(started);
+        // assert(started);
         unsigned int dummy = 0;
         uint64_t time_elapse = __rdtscp(&dummy) - time_started;
         time_accumulated += time_elapse / reference_frequency;

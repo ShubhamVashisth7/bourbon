@@ -119,7 +119,7 @@ int main(int argc, char *argv[]) {
         data = new uint64_t[total_keys];
         is.read(reinterpret_cast<char*>(data), total_keys*sizeof(uint64_t));
         is.close();
-        for (int i = 0; i < num_operations; ++i) 
+        for (int i = 0; i < total_keys; ++i) 
             keys.push_back(generate_key(to_string(data[i])));
         adgMod::key_size = (int) keys.front().size();
     } else {
@@ -193,31 +193,31 @@ int main(int argc, char *argv[]) {
             status = DB::Open(options, db_location, &db);
             assert(status.ok() && "Open Error");
             // different load order
-            int cut_size = std::max(1, (int)(keys.size() / 100000)); 
+            int cut_size = std::max(1, (int)(num_operations / 100000)); 
             std::vector<std::pair<int, int>> chunks;
             switch (load_type) {
                 case Ordered: {
                     for (int cut = 0; cut < cut_size; ++cut) {
-                        chunks.emplace_back(keys.size() * cut / cut_size, keys.size() * (cut + 1) / cut_size);
+                        chunks.emplace_back(num_operations * cut / cut_size, num_operations * (cut + 1) / cut_size);
                     }
                     break;
                 }
                 case ReversedChunk: {
                     for (int cut = cut_size - 1; cut >= 0; --cut) {
-                        chunks.emplace_back(keys.size() * cut / cut_size, keys.size() * (cut + 1) / cut_size);
+                        chunks.emplace_back(num_operations * cut / cut_size, num_operations * (cut + 1) / cut_size);
                     }
                     break;
                 }
                 case Random: {
                     std::random_shuffle(keys.begin(), keys.end());
                     for (int cut = 0; cut < cut_size; ++cut) {
-                        chunks.emplace_back(keys.size() * cut / cut_size, keys.size() * (cut + 1) / cut_size);
+                        chunks.emplace_back(num_operations * cut / cut_size, num_operations * (cut + 1) / cut_size);
                     }
                     break;
                 }
                 case RandomChunk: {
                     for (int cut = 0; cut < cut_size; ++cut) {
-                        chunks.emplace_back(keys.size() * cut / cut_size, keys.size() * (cut + 1) / cut_size);
+                        chunks.emplace_back(num_operations * cut / cut_size, num_operations * (cut + 1) / cut_size);
                     }
                     std::random_shuffle(chunks.begin(), chunks.end());
                     break;
@@ -226,7 +226,7 @@ int main(int argc, char *argv[]) {
             }
 
             // perform load
-            std::cout << "inserting " << keys.size() << " keys\n";
+            std::cout << "inserting " << num_operations << " keys\n";
             for (int cut = 0; cut < chunks.size(); ++cut) {
                 if ((cut+1) % 50 == 0)
                     cout << "chunk inserted: " << cut+1 << "/" << cut_size << endl;
@@ -279,7 +279,7 @@ int main(int argc, char *argv[]) {
         bool start_new_event = true;
 
         uint64_t write_i = 0;
-        std::shuffle(keys.begin(), keys.end(), std::default_random_engine(seed));
+        // std::shuffle(keys.begin(), keys.end(), std::default_random_engine(seed));
         cout << "running " << num_operations << " operations with " << num_threads << " threads" << endl;
         int ops_per_thread = num_operations / num_threads; 
         cout << "ops_per_thread: " << ops_per_thread << endl;
@@ -287,8 +287,8 @@ int main(int argc, char *argv[]) {
         std::mutex cout_mutex;
         auto start = std::chrono::high_resolution_clock::now();
         int remaining_ops = num_operations % num_threads;
-        int keys_per_thread = keys.size() / num_threads;
-        int remaining_keys = keys.size() % num_threads;
+        int keys_per_thread = num_operations / num_threads;
+        int remaining_keys = num_operations % num_threads;
         std::vector<std::thread> threads;
         int keys_start = 0;
         for (int t = 0; t < num_threads; ++t) {
@@ -303,7 +303,7 @@ int main(int argc, char *argv[]) {
                     bool write = use_ycsb ? ycsb_is_write[i] > 0 : (i % mix_base) < num_mix;
                     uint64_t random_key = dist(generator);
                     if (write) {
-                        status = db->Put(write_options, keys[random_key], {values.data() + uniform_dist_value(e2), (uint64_t) adgMod::value_size});
+                        status = db->Put(write_options, keys[keys.size()-1], {values.data() + uniform_dist_value(e2), (uint64_t) adgMod::value_size});
                         assert(status.ok() && "File Put Error");
                     }
                     else {

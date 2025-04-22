@@ -24,52 +24,8 @@ using std::to_string;
 using std::vector;
 using std::map;
 using std::ifstream;
-using std::string;
 
 int mix_base = 20;
-
-class NumericalComparator : public Comparator {
-public:
-    NumericalComparator() = default;
-    virtual const char* Name() const {return "adgMod:NumericalComparator";}
-    virtual int Compare(const Slice& a, const Slice& b) const {
-        uint64_t ia = adgMod::ExtractInteger(a.data(), a.size());
-        uint64_t ib = adgMod::ExtractInteger(b.data(), b.size());
-        if (ia < ib) return -1;
-        else if (ia == ib) return 0;
-        else return 1;
-    }
-    virtual void FindShortestSeparator(std::string* start, const Slice& limit) const { return; };
-    virtual void FindShortSuccessor(std::string* key) const { return; };
-};
-
-/*void PutAndPrefetch(int lower, int higher, vector<string>& keys) {
-    adgMod::Stats* instance = adgMod::Stats::GetInstance();
-
-    Status status;
-
-    instance->StartTimer(9);
-    for (int i = lower; i < higher; ++i) {
-        string value = generate_value(0);
-        status = db->Put(write_options, keys[i], value);
-        assert(status.ok() && "File Put Error");
-    }
-    instance->PauseTimer(9, true);
-
-    //cout << "Put Complete" << endl;
-
-
-    instance->StartTimer(10);
-    for (int i = lower; i < higher; ++i) {
-        string value;
-        status = db->Get(read_options, keys[i], &value);
-        //cout << "Get " << keys[i] << " Done" << endl;
-        assert(status.ok() && "File Get Error");
-    }
-    instance->PauseTimer(10, true);
-
-    //cout << "Prefetch Complete" << endl;
-};*/
 
 enum LoadType {
     Ordered = 0,
@@ -130,7 +86,7 @@ int main(int argc, char *argv[]) {
             ("YCSB", "use YCSB trace", cxxopts::value<string>(ycsb_filename)->default_value(""))
             ("insert", "insert new value", cxxopts::value<int>(insert_bound)->default_value("0"))
             ("t,threads", "# threads", cxxopts::value<int>(num_threads)->default_value("1"))
-            ("seed", "seed", cxxopts::value<int>(seed)->default_value("1234"));
+            ("seed", "seed", cxxopts::value<int>(seed)->default_value("62"));
     auto result = commandline_options.parse(argc, argv);
     if (result.count("help")) {
         printf("%s", commandline_options.help().c_str());
@@ -205,7 +161,7 @@ int main(int argc, char *argv[]) {
     string values(1024 * 1024, '0');
 
     if (copy_out) {
-        // rc = system("sync; echo 3 | sudo tee /proc/sys/vm/drop_caches");
+        rc = system("sync; echo 3 | sudo tee /proc/sys/vm/drop_caches");
     }
 
     if (num_mix > 1000) {
@@ -214,10 +170,6 @@ int main(int argc, char *argv[]) {
     }
     
     for (size_t iteration = 0; iteration < num_iteration; ++iteration) {
-        if (copy_out) {
-            // rc = system("sudo fstrim -a -v");
-        }
-
         db_location = db_location_copy;
         std::uniform_int_distribution<uint64_t > uniform_dist_file(0, (uint64_t) keys.size() - 1);
         std::uniform_int_distribution<uint64_t > uniform_dist_file2(0, (uint64_t) keys.size() - 1);
@@ -230,24 +182,16 @@ int main(int argc, char *argv[]) {
         Status status;
 
         options.create_if_missing = true;
-        //options.comparator = new NumericalComparator;
-        //adgMod::block_restart_interval = options.block_restart_interval = adgMod::MOD == 8 || adgMod::MOD == 7 ? 1 : adgMod::block_restart_interval;
-        //read_options.fill_cache = true;
         write_options.sync = true;
-        // instance->ResetAll();
+        instance->ResetAll();
 
         if (fresh_write && iteration == 0) {
             // Load DB
             // clear existing directory, clear page cache, trim SSD
             string command = "rm -rf " + db_location;
             rc = system(command.c_str());
-            // rc = system("sudo fstrim -a -v");
-            // rc = system("sync; echo 3 | sudo tee /proc/sys/vm/drop_caches");
-            cout << "delete and trim complete" << endl;
-
             status = DB::Open(options, db_location, &db);
             assert(status.ok() && "Open Error");
-            // instance->StartTimer(9);
             // different load order
             int cut_size = std::max(1, (int)(keys.size() / 100000)); 
             std::vector<std::pair<int, int>> chunks;
@@ -293,7 +237,6 @@ int main(int argc, char *argv[]) {
                 }
             }
             adgMod::db->vlog->Sync();
-            // instance->PauseTimer(9, true);
 
             // do offline leraning
             if (print_file_info && iteration == 0) db->PrintFileInfo();
@@ -320,38 +263,21 @@ int main(int argc, char *argv[]) {
             string remove_command = "rm -rf " + db_location_mix;
             string copy_command = "cp -r " + db_location + " " + db_location_mix;
 
-            // rc = system(remove_command.c_str());
-            // rc = system(copy_command.c_str());
+            rc = system(remove_command.c_str());
+            rc = system(copy_command.c_str());
             db_location = db_location_mix;
         }
 
-        // if (evict) rc = system("sync; echo 3 | sudo tee /proc/sys/vm/drop_caches");
-        // (void) rc;
+        if (evict) rc = system("sync; echo 3 | sudo tee /proc/sys/vm/drop_caches");
+        (void) rc;
 
-        // status = DB::Open(options, db_location, &db);
         adgMod::db->WaitForBackground();
-        // assert(status.ok() && "Open Error");
-//            for (int s = 12; s < 20; ++s) {
-//                instance->ResetTimer(s);
-//            }
-
-//        if (adgMod::MOD == 6 || adgMod::MOD == 7) {
-//            for (int i = 1; i < config::kNumLevels; ++i) {
-//                Version* current = adgMod::db->versions_->current();
-//                LearnedIndexData::Learn(new VersionAndSelf{current, adgMod::db->version_count, current->learned_index_data_[i].get(), i});
-//            }
-//        }
-//        cout << "Shutting down" << endl;
-//        adgMod::db->WaitForBackground();
-//        delete db;
-//        return 0;
 
         uint64_t last_read = 0, last_write = 0;
         int last_level = 0, last_file = 0, last_baseline = 0, last_succeeded = 0, last_false = 0, last_compaction = 0, last_learn = 0;
         std::vector<uint64_t> detailed_times;
         bool start_new_event = true;
 
-        // instance->StartTimer(13);
         uint64_t write_i = 0;
         std::shuffle(keys.begin(), keys.end(), std::default_random_engine(seed));
         cout << "running " << num_operations << " operations with " << num_threads << " threads" << endl;
@@ -375,14 +301,19 @@ int main(int argc, char *argv[]) {
                 std::uniform_int_distribution<uint64_t> dist(keys_start, keys_end - 1);
                 ReadOptions local_read_options = read_options;
                 for (int i = 0; i < thread_ops; ++i) {
-                    string value;
+                    bool write = use_ycsb ? ycsb_is_write[i] > 0 : (i % mix_base) < num_mix;
                     uint64_t random_key = dist(generator);
-                    // instance->StartTimer(4);
-                    Status local_status = db->Get(local_read_options, keys[random_key], &value);
-                    // instance->PauseTimer(4);
-                    if (!local_status.ok() || value.size() != adgMod::value_size) {
-                        std::lock_guard<std::mutex> lock(cout_mutex);
-                        cout << keys[random_key] << " absent or corrupted" << endl;
+                    if (write) {
+                        status = db->Put(write_options, keys[random_key], {values.data() + uniform_dist_value(e2), (uint64_t) adgMod::value_size});
+                        assert(status.ok() && "File Put Error");
+                    }
+                    else {
+                        string value;
+                        Status local_status = db->Get(local_read_options, keys[random_key], &value);
+                        if (!local_status.ok() || value.size() != adgMod::value_size) {
+                            // std::lock_guard<std::mutex> lock(cout_mutex);
+                            cout << keys[random_key] << " absent or corrupted" << endl;
+                        }
                     }
                 }
             });
@@ -392,149 +323,17 @@ int main(int argc, char *argv[]) {
             thread.join();
         }    
         auto end = std::chrono::high_resolution_clock::now();  
-        // for (int i = 0; i < num_operations; ++i) {
-
-        //     if (start_new_event) {
-        //         detailed_times.push_back(instance->GetTime());
-        //         start_new_event = false;
-        //     }
-
-        //     bool write = use_ycsb ? ycsb_is_write[i] > 0 : (i % mix_base) < num_mix;
-
-        //     if (write) { exit(0); } 
-        //     else {
-        //         // read
-        //         string value;
-        //         uint64_t random_key = GenerateRandomIndex(num_operations);
-        //         const string& key = keys[random_key];
-        //         instance->StartTimer(4);
-        //         // cout << "Get op: " << i << "/" << num_operations << " | pos in array: " << index << " | key: " << key << endl;
-        //         status = db->Get(read_options, keys[random_key], &value);
-        //         instance->PauseTimer(4);
-        //         if (!status.ok() || value.size() != value_size) { cout << key << " absent or curropted" << endl; }
-        //     }
-            
-            
-        //     // collect data every 1/10 of the run
-        //     /*if ((i + 1) % (num_operations / 100) == 0) detailed_times.push_back(instance->GetTime());
-        //     if ((i + 1) % (num_operations / 10) == 0) {
-        //         int level_read = levelled_counters[0].Sum();
-        //         int file_read = levelled_counters[1].Sum();
-        //         int baseline_read = levelled_counters[2].Sum();
-        //         int succeeded_read = levelled_counters[3].NumSum();
-        //         int false_read = levelled_counters[4].NumSum();
-
-        //         compaction_counter_mutex.Lock();
-        //         int num_compaction = events[0].size();
-        //         compaction_counter_mutex.Unlock();
-        //         learn_counter_mutex.Lock();
-        //         int num_learn = events[1].size();
-        //         learn_counter_mutex.Unlock();
-
-        //         uint64_t read_time = instance->ReportTime(4);
-        //         uint64_t write_time = instance->ReportTime(10);
-        //         std::pair<uint64_t, uint64_t> time = {detailed_times.front(), detailed_times.back()};
-
-        //         events[2].push_back(new WorkloadEvent(time, level_read - last_level, file_read - last_file, baseline_read - last_baseline,
-        //             succeeded_read - last_succeeded, false_read - last_false, num_compaction - last_compaction, num_learn - last_learn,
-        //             read_time - last_read, write_time - last_write, std::move(detailed_times)));
-
-        //         last_level = level_read;
-        //         last_file = file_read;
-        //         last_baseline = baseline_read;
-        //         last_succeeded = succeeded_read;
-        //         last_false = false_read;
-        //         last_compaction = num_compaction;
-        //         last_learn = num_learn;
-        //         last_read = read_time;
-        //         last_write = write_time;
-        //         detailed_times.clear();
-        //         start_new_event = true;
-        //         cout << (i + 1) / (num_operations / 10) << endl;
-        //         Version* current = adgMod::db->versions_->current();
-        //         printf("LevelSize %d %d %d %d %d %d\n", current->NumFiles(0), current->NumFiles(1), current->NumFiles(2), current->NumFiles(3),
-        //                current->NumFiles(4), current->NumFiles(5));
-        //     }
-        //     */
-        // }
-        
-
-        // instance->PauseTimer(13, true);
-
-        // report various data after the run
-        // instance->ReportTime();
-        // for (int s = 0; s < times.size(); ++s) {
-        //     times[s].push_back(instance->ReportTime(s));
-        // }
         adgMod::db->WaitForBackground();
-        // sleep(10);
-
-        // for (auto& event_array : events) {
-        //     for (Event* e : event_array) 
-        //     e->Report();
-        // }
-
-        // for (Counter& c : levelled_counters) 
-        // c.Report();
-
-        // file_data->Report();
-
-        // for (auto it : file_stats) {
-            // printf("FileStats %d %d %lu %lu %u %u %lu %d\n", it.first, it.second.level, it.second.start,
-            //     it.second.end, it.second.num_lookup_pos, it.second.num_lookup_neg, it.second.size, it.first < file_data->watermark ? 0 : 1);
-        // }
-
-        // adgMod::learn_cb_model->Report();
         delete db;
 
         auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
         double seconds = duration.count() / 1000000;
         double throughput = num_operations / seconds;
         
-        std::cout << "Threads: " << num_threads 
+        cout << "Threads: " << num_threads 
                   << ", Operations: " << num_operations
                   << ", Duration: " << seconds << " seconds"
                   << ", Throughput: " << throughput/1e6 << " Mops/s" 
                   << std::endl;
     }
-
-    // print out averages
-    // for (int s = 0; s < times.size(); ++s) {
-    //     vector<uint64_t>& time = times[s];
-    //     vector<double> diff(time.size());
-    //     if (time.empty()) continue;
-
-    //     double sum = std::accumulate(time.begin(), time.end(), 0.0);
-    //     double mean = sum / time.size();
-    //     std::transform(time.begin(), time.end(), diff.begin(), [mean] (double x) { return x - mean; });
-    //     double stdev = std::sqrt(std::inner_product(diff.begin(), diff.end(), diff.begin(), 0.0) / time.size());
-
-    //     printf("Timer %d MEAN: %lu, STDDEV: %f\n", s, (uint64_t) mean, stdev);
-    // }
-
-    // if (num_iteration > 1) {
-    //     cout << "Data Without the First Item" << endl;
-    //     for (int s = 0; s < times.size(); ++s) {
-    //         vector<uint64_t>& time = times[s];
-    //         vector<double> diff(time.size() - 1);
-    //         if (time.empty()) continue;
-
-    //         double sum = std::accumulate(time.begin() + 1, time.end(), 0.0);
-    //         double mean = sum / (time.size() - 1);
-    //         std::transform(time.begin() + 1, time.end(), diff.begin(), [mean] (double x) { return x - mean; });
-    //         double stdev = std::sqrt(std::inner_product(diff.begin(), diff.end(), diff.begin(), 0.0) / time.size());
-
-    //         printf("Timer %d MEAN: %lu, STDDEV: %f\n", s, (uint64_t) mean, stdev);
-    //     }
-    // }
-
-    // if (!times[4].empty()) {
-    //     uint64_t total_read_time = std::accumulate(times[4].begin(), times[4].end(), 0ULL);
-    //     uint64_t total_read_ops = num_iteration * num_operations; 
-    //     if (total_read_time > 0) {
-    //         double seconds = total_read_time / 1e9;  
-    //         double mops = (total_read_ops / seconds) / 1e6; 
-    //         printf("Read Throughput: %.6f Mops/s\n", mops);
-    //         }
-    //     }
 }

@@ -299,7 +299,6 @@ int main(int argc, char *argv[]) {
                 std::random_device rd;
                 std::mt19937_64 generator(rd());
                 std::uniform_int_distribution<uint64_t> dist(keys_start, keys_end - 1);
-                ReadOptions local_read_options = read_options;
                 for (int i = 0; i < thread_ops; ++i) {
                     bool write = use_ycsb ? ycsb_is_write[i] > 0 : (i % mix_base) < num_mix;
                     uint64_t random_key = dist(generator);
@@ -309,6 +308,7 @@ int main(int argc, char *argv[]) {
                     }
                     else {
                         string value;
+                        ReadOptions local_read_options = read_options;
                         Status local_status = db->Get(local_read_options, keys[random_key], &value);
                         if (!local_status.ok() || value.size() != adgMod::value_size) {
                             // std::lock_guard<std::mutex> lock(cout_mutex);

@@ -25,10 +25,7 @@ using std::map;
 using std::ifstream;
 using std::string;
 
-int num_pairs_base = 1000;
 int mix_base = 20;
-
-
 
 class NumericalComparator : public Comparator {
 public:
@@ -89,12 +86,12 @@ int main(int argc, char *argv[]) {
     string db_location, profiler_out, input_filename, distribution_filename, ycsb_filename;
     bool print_single_timing, print_file_info, evict, unlimit_fd, use_distribution = false, pause, use_ycsb = false;
     bool change_level_load, change_file_load, change_level_learning, change_file_learning;
-    int load_type, insert_bound, length_range;
+    int load_type, insert_bound, length_range, seed;
     string db_location_copy;
 
     cxxopts::Options commandline_options("leveldb read test", "Testing leveldb read performance.");
     commandline_options.add_options()
-            ("n,get_number", "the number of gets (to be multiplied by 1024)", cxxopts::value<int>(num_operations)->default_value("1000"))
+            ("n,get_number", "the number of operations", cxxopts::value<int>(num_operations)->default_value("1000"))
             ("s,step", "the step of the loop of the size of db", cxxopts::value<float>(num_pair_step)->default_value("1"))
             ("i,iteration", "the number of iterations of a same size", cxxopts::value<int>(num_iteration)->default_value("1"))
             ("m,modification", "if set, run our modified version", cxxopts::value<int>(adgMod::MOD)->default_value("0"))
@@ -125,7 +122,8 @@ int main(int argc, char *argv[]) {
             ("policy", "learn policy", cxxopts::value<int>(adgMod::policy)->default_value("0"))
             ("YCSB", "use YCSB trace", cxxopts::value<string>(ycsb_filename)->default_value(""))
             ("insert", "insert new value", cxxopts::value<int>(insert_bound)->default_value("0"))
-            ("range", "use range query and specify length", cxxopts::value<int>(length_range)->default_value("0"));
+            ("range", "use range query and specify length", cxxopts::value<int>(length_range)->default_value("0"))
+            ("seed", "random ssed", cxxopts::value<int>(seed)->default_value("62"));
     auto result = commandline_options.parse(argc, argv);
     if (result.count("help")) {
         printf("%s", commandline_options.help().c_str());
@@ -133,8 +131,7 @@ int main(int argc, char *argv[]) {
     }
 
     std::default_random_engine e1(0), e2(255), e3(0);
-    srand(0);
-    num_operations *= num_pairs_base;
+    srand(seed);
     db_location_copy = db_location;
 
     adgMod::fd_limit = unlimit_fd ? 1024 * 1024 : 1024;
@@ -152,17 +149,38 @@ int main(int argc, char *argv[]) {
     vector<int> ycsb_is_write;
     //keys.reserve(100000000000 / adgMod::value_size);
     if (!input_filename.empty()) {
-        ifstream input(input_filename);
-        string key;
-        while (input >> key) {
-            string the_key = generate_key(key);
-            keys.push_back(std::move(the_key));
-        }
+        // ifstream input(input_filename);
+        // string key;
+        // while (input >> key) {
+        //     string the_key = generate_key(key);
+        //     keys.push_back(std::move(the_key));
+        // }
         //adgMod::key_size = (int) keys.front().size();
-        cout << "shuffling keys" << endl;
+        uint64_t total_keys, *data;
+        std::ifstream is(input_filename, std::ios::binary | std::ios::in);
+        std::cout << "Reading keys from " << input_filename << endl;
+        is.read(reinterpret_cast<char*>(&total_keys), sizeof(uint64_t));
+        data = new uint64_t[total_keys];
+        is.read(reinterpret_cast<char*>(data), total_keys*sizeof(uint64_t));
+        is.close();
+
+        for (int i = 0; i < num_operations; ++i) 
+            keys.push_back(generate_key(to_string(data[i])));
+        adgMod::key_size = (int) keys.front().size();
+
+        keys.resize(num_operations);
+        cout << "Shuffling keys" << endl;
         std::random_device rd;
         std::mt19937 g(rd());
         shuffle(keys.begin(), keys.end(), g);
+
+        cout << "Sample keys: ";
+        for (int i = 0; i < 5; ++i)
+            cout << keys[i] << " ";
+        cout << endl;
+
+        
+
     } else {
         std::uniform_int_distribution<uint64_t> udist_key(0, 999999999999999);
         for (int i = 0; i < 10000000; ++i) {
@@ -225,7 +243,7 @@ int main(int argc, char *argv[]) {
         //options.comparator = new NumericalComparator;
         //adgMod::block_restart_interval = options.block_restart_interval = adgMod::MOD == 8 || adgMod::MOD == 7 ? 1 : adgMod::block_restart_interval;
         //read_options.fill_cache = true;
-        write_options.sync = false;
+        write_options.sync = true;
         instance->ResetAll();
 
 
@@ -274,6 +292,7 @@ int main(int argc, char *argv[]) {
             }
 
             int count = 0;
+            cout << "Initializing with " << keys.size() << " keys" << endl;
             for (int cut = 0; cut < chunks.size(); ++cut) {
                 for (int i = chunks[cut].first; i < chunks[cut].second; ++i) {
 
@@ -348,20 +367,7 @@ int main(int argc, char *argv[]) {
         adgMod::db->WaitForBackground();
         Iterator* db_iter = length_range == 0 ? nullptr : db->NewIterator(read_options);
         assert(status.ok() && "Open Error");
-//            for (int s = 12; s < 20; ++s) {
-//                instance->ResetTimer(s);
-//            }
 
-//        if (adgMod::MOD == 6 || adgMod::MOD == 7) {
-//            for (int i = 1; i < config::kNumLevels; ++i) {
-//                Version* current = adgMod::db->versions_->current();
-//                LearnedIndexData::Learn(new VersionAndSelf{current, adgMod::db->version_count, current->learned_index_data_[i].get(), i});
-//            }
-//        }
-//        cout << "Shutting down" << endl;
-//        adgMod::db->WaitForBackground();
-//        delete db;
-//        return 0;
 
         uint64_t last_read = 0, last_write = 0;
         int last_level = 0, last_file = 0, last_baseline = 0, last_succeeded = 0, last_false = 0, last_compaction = 0, last_learn = 0;
@@ -516,6 +522,18 @@ int main(int argc, char *argv[]) {
         }
         auto end = std::chrono::high_resolution_clock::now();
         cout << "total reads: " << read_count << " | total writes: " << write_count << endl;
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+        double seconds = duration.count() / 1000000;
+        double throughput = num_operations / seconds;
+        
+        if (adgMod::MOD == 7)
+            cout << "Bourbon: ";
+        else if (adgMod::MOD == 8)
+            cout << "Wisckey: ";
+        cout << "Operations: " << num_operations
+                << ", Duration: " << seconds << " seconds"
+                << ", Throughput: " << throughput << " op/s" 
+                << std::endl;
         instance->PauseTimer(13, true);
 
 
@@ -524,7 +542,7 @@ int main(int argc, char *argv[]) {
         // for (int s = 0; s < times.size(); ++s) {
         //     times[s].push_back(instance->ReportTime(s));
         // }
-        // adgMod::db->WaitForBackground();
+        adgMod::db->WaitForBackground();
         // sleep(10);
 
 
@@ -546,15 +564,6 @@ int main(int argc, char *argv[]) {
 
         delete db_iter;
         delete db;
-
-        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-        double seconds = duration.count() / 1000000;
-        double throughput = num_operations / seconds;
-        
-        cout << "Operations: " << num_operations
-                << ", Duration: " << seconds << " seconds"
-                << ", Throughput: " << throughput/1e6 << " Mops/s" 
-                << std::endl;
     }
 
 

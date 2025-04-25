@@ -375,9 +375,9 @@ int main(int argc, char *argv[]) {
         std::vector<uint64_t> detailed_times;
         bool start_new_event = true;
 
-        instance->StartTimer(13);
-        int read_count = 0, write_count = 0;
+        // instance->StartTimer(13);
         uint64_t write_i = 0;
+        int read_count = 0, write_count = 0;
         cout << "Running " << num_operations << " operations" << endl;
         auto start = std::chrono::high_resolution_clock::now();
         for (int i = 0; i < num_operations; ++i) {
@@ -391,93 +391,23 @@ int main(int argc, char *argv[]) {
             length_range = use_ycsb && ycsb_is_write[i] > 2 ? ycsb_is_write[i] - 100 : length_range;
 
             if (write) {
-                // if (input_filename.empty()) {
-                //     instance->StartTimer(10);
-                //     status = db->Put(write_options, generate_key(to_string(distribution[i])), {values.data() + uniform_dist_value(e3), (uint64_t) adgMod::value_size});
-                //     instance->PauseTimer(10);
-                // } else {
                     uint64_t index;
-                    // if (use_distribution) {
-                    //     cout << "one index\n";
-                    //     index = distribution[i];
-                    // } else if (load_type == 0) {
-                    //     cout << "two index\n";
-                    //     index = write_i++ % keys.size();
-                    // } else {
-                    //     cout << "three index\n";
-                        index = uniform_dist_file(e1) % (keys.size() - 1);
-                    // }
-
-                    // instance->StartTimer(10);
-                    // if (use_ycsb && ycsb_is_write[i] == 2) {
-                    //     status = db->Put(write_options, generate_key(to_string(10000000000 + index)), {values.data() + uniform_dist_value(e3), (uint64_t) adgMod::value_size});
-                    // } else {
-                        // cout << "write "  << i << " | key: " << keys[index] << endl;
-                        write_count++;
-                        status = db->Put(write_options, keys[index], {values.data() + uniform_dist_value(e3), (uint64_t) adgMod::value_size});
-                        assert(status.ok() && "File Put Error");
-                    // }
-                    // instance->PauseTimer(10);
-                    // assert(status.ok() && "Mix Put Error");
-                    //cout << index << endl;
+                    index = uniform_dist_file(e1) % (keys.size() - 1);
+                    write_count++;
+                    status = db->Put(write_options, keys[index], {values.data() + uniform_dist_value(e3), (uint64_t) adgMod::value_size});
+                    assert(status.ok() && "File Put Error");
                 }
-            // } else if (length_range != 0) {
-            //     // Seek
-            //     if (input_filename.empty()) {
-            //         instance->StartTimer(4);
-            //         db_iter->Seek(generate_key(to_string(distribution[i])));
-            //         instance->PauseTimer(4);
-            //     } else {
-            //         uint64_t index = use_distribution ? distribution[i] : uniform_dist_file2(e2) % (keys.size() - 1);
-            //         index = index >= length_range ? index - length_range : 0;
-            //         const string& key = keys[index];
-            //         instance->StartTimer(4);
-            //         db_iter->Seek(key);
-            //         instance->PauseTimer(4);
-            //     }
-                
-            //     // Range
-            //     instance->StartTimer(17);
-            //     for (int r = 0; r < length_range; ++r) {
-            //         if (!db_iter->Valid()) break;
-            //         Slice key = db_iter->key();
-            //         string value = db_iter->value().ToString();
-            //         // cout << key.ToString() << value << endl;
-            //         // value.clear();
-            //         db_iter->Next();
-            //     }
-            //     instance->PauseTimer(17);
-            // } 
             else {
-                string value;
-                // if (input_filename.empty()) {
-                //     instance->StartTimer(4);
-                //     status = db->Get(read_options, generate_key(to_string(distribution[i])), &value);
-                //     instance->PauseTimer(4);
-                //     if (!status.ok()) {
-                //         cout << distribution[i] << " Not Found" << endl;
-                //         //assert(status.ok() && "File Get Error");
-                //     }
-                // } else {
+                    string value;
                     uint64_t index = use_distribution ? distribution[i] : uniform_dist_file2(e2) % (keys.size() - 1);
                     const string& key = keys[index];
-                //     instance->StartTimer(4);
-                //     if (insert_bound != 0 && index > insert_bound) {
-                //         status = db->Get(read_options, generate_key(to_string(10000000000 + index)), &value);
-                //     } else {
-                //         // cout << "read " << i << " | key: " << key << endl;
-                        status = db->Get(read_options, key, &value);
-                        read_count++;
-                    // }
-                    // instance->PauseTimer(4);
-
-                    //cout << "Get " << key << " : " << value << endl;
+                    status = db->Get(read_options, key, &value);
+                    read_count++;
                     if (!status.ok()) {
                         cout << key << " Not Found" << endl;
-                        //assert(status.ok() && "File Get Error");
                     }
                 }
-            }
+        }
 
             // if (pause) {
             //     if ((i + 1) % (num_operations / 10000) == 0) ::usleep(800000);
@@ -540,7 +470,7 @@ int main(int argc, char *argv[]) {
                 << ", Duration: " << seconds << " seconds"
                 << ", Throughput: " << throughput << " op/s" 
                 << std::endl;
-        instance->PauseTimer(13, true);
+        // instance->PauseTimer(13, true);
 
 
 

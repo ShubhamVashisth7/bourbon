@@ -82,7 +82,7 @@ enum LoadType {
 int main(int argc, char *argv[]) {
     int num_operations, num_iteration, num_mix;
     float test_num_segments_base;
-    float num_pair_step;
+    float num_pair_step, read_write_percent;
     string db_location, profiler_out, input_filename, distribution_filename, ycsb_filename;
     bool print_single_timing, print_file_info, evict, unlimit_fd, use_distribution = false, pause, use_ycsb = false;
     bool change_level_load, change_file_load, change_level_learning, change_file_learning;
@@ -112,7 +112,7 @@ int main(int argc, char *argv[]) {
             ("x,dummy", "dummy option")
             ("l,load_type", "load type", cxxopts::value<int>(load_type)->default_value("0"))
             ("filter", "use filter", cxxopts::value<bool>(adgMod::use_filter)->default_value("false"))
-            ("mix", "mix read and write", cxxopts::value<int>(num_mix)->default_value("0"))
+            ("read_write_percent", "read_write_percent", cxxopts::value<float>(read_write_percent)->default_value("1.0"))
             ("distribution", "operation distribution", cxxopts::value<string>(distribution_filename)->default_value(""))
             ("change_level_load", "load level model", cxxopts::value<bool>(change_level_load)->default_value("false"))
             ("change_file_load", "enable level learning", cxxopts::value<bool>(change_file_load)->default_value("false"))
@@ -365,7 +365,7 @@ int main(int argc, char *argv[]) {
         assert(status.ok() && "Open Error");
         
         std::atomic<int> read_count{0}, write_count{0}; 
-        int mix_base = 20;
+        // int mix_base = 20;
         cout << "Running " << num_operations << " operations" << endl;
         /* auto start = std::chrono::high_resolution_clock::now();
         for (int i = 0; i < num_operations; ++i) {
@@ -397,21 +397,18 @@ int main(int argc, char *argv[]) {
             std::default_random_engine e1(thread_id + 1);
             std::default_random_engine e2(thread_id + 100);
             std::default_random_engine e3(thread_id + 200);
-
+        
             std::uniform_int_distribution<uint64_t> uniform_dist_file_read(0, keys.size() - 1);
             std::uniform_int_distribution<uint64_t> uniform_dist_file_write(0, keys.size() - 1);
             std::uniform_int_distribution<uint64_t> uniform_dist_file_value(0, values.size() - adgMod::value_size);
-
-            for (int i = 0; i < (num_operations / num_threads); ++i) {
-                bool write = (i % mix_base) < num_mix;
-
-                if (write) {
-                    uint64_t index = uniform_dist_file_write(e1);
-                    std::string value_chunk(values.data() + uniform_dist_file_value(e3), adgMod::value_size);
-                    auto status = db->Put(write_options, keys[index], value_chunk);
-                    assert(status.ok() && "File Put Error");
-                    write_count++;
-                } else {
+        
+            if (read_write_percent == 1.0) {
+                // Special case: all reads i.e. no writer thread
+                int reads_total = num_operations;
+                int reads_per_thread = reads_total / num_threads;
+                int extra_reads = (thread_id == 0) ? (reads_total % num_threads) : 0;
+        
+                for (int i = 0; i < reads_per_thread + extra_reads; ++i) {
                     uint64_t index = uniform_dist_file_read(e2);
                     std::string value;
                     auto status = db->Get(read_options, keys[index], &value);
@@ -421,14 +418,43 @@ int main(int argc, char *argv[]) {
                     read_count++;
                 }
             }
+            else {
+                if (thread_id == 0) {
+                    int writes_to_do = num_operations - num_operations * read_write_percent;
+                    for (int i = 0; i < writes_to_do; ++i) {
+                        uint64_t index = uniform_dist_file_write(e1);
+                        std::string value_chunk(values.data() + uniform_dist_file_value(e3), adgMod::value_size);
+                        auto status = db->Put(write_options, keys[index], value_chunk);
+                        assert(status.ok() && "File Put Error");
+                        write_count++;
+                    }
+                } else {
+                    int reads_total = num_operations * read_write_percent;
+                    int reads_per_thread = reads_total / (num_threads - 1);
+                    int extra_reads = (thread_id == 1) ? (reads_total % (num_threads - 1)) : 0; 
+        
+                    for (int i = 0; i < reads_per_thread + extra_reads; ++i) {
+                        uint64_t index = uniform_dist_file_read(e2);
+                        std::string value;
+                        auto status = db->Get(read_options, keys[index], &value);
+                        if (!status.ok()) {
+                            std::cout << keys[index] << " Not Found" << std::endl;
+                        }
+                        read_count++;
+                    }
+                }
+            }
         };
 
         std::vector<std::thread> threads;
         auto start = std::chrono::high_resolution_clock::now();
+
         for (int i = 0; i < num_threads; ++i) 
             threads.emplace_back(run_operations, i);
+
         for (auto& t : threads) 
             t.join();
+
         auto end = std::chrono::high_resolution_clock::now();
         // ******* END OF CONCURRENT LOGIC *******
 

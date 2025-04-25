@@ -13,6 +13,8 @@
 #include "../db/version_set.h"
 #include <cmath>
 #include <random>
+#include <thread>
+#include <atomic>
 
 using namespace leveldb;
 using namespace adgMod;
@@ -84,7 +86,7 @@ int main(int argc, char *argv[]) {
     string db_location, profiler_out, input_filename, distribution_filename, ycsb_filename;
     bool print_single_timing, print_file_info, evict, unlimit_fd, use_distribution = false, pause, use_ycsb = false;
     bool change_level_load, change_file_load, change_level_learning, change_file_learning;
-    int load_type, insert_bound, length_range, seed;
+    int load_type, insert_bound, length_range, num_threads, seed;
     string db_location_copy;
 
     cxxopts::Options commandline_options("leveldb read test", "Testing leveldb read performance.");
@@ -121,13 +123,13 @@ int main(int argc, char *argv[]) {
             ("YCSB", "use YCSB trace", cxxopts::value<string>(ycsb_filename)->default_value(""))
             ("insert", "insert new value", cxxopts::value<int>(insert_bound)->default_value("0"))
             ("range", "use range query and specify length", cxxopts::value<int>(length_range)->default_value("0"))
+            ("t,threads", "threads", cxxopts::value<int>(num_threads)->default_value("16"))
             ("seed", "random ssed", cxxopts::value<int>(seed)->default_value("62"));
     auto result = commandline_options.parse(argc, argv);
     if (result.count("help")) {
         printf("%s", commandline_options.help().c_str());
         exit(0);
     }
-
     std::default_random_engine e1(0), e2(255), e3(0);
     srand(seed);
     db_location_copy = db_location;
@@ -361,11 +363,11 @@ int main(int argc, char *argv[]) {
         adgMod::db->WaitForBackground();
         Iterator* db_iter = length_range == 0 ? nullptr : db->NewIterator(read_options);
         assert(status.ok() && "Open Error");
-
-        // ******* START OF CONCURRENT LOGIC *******
-        int read_count = 0, write_count = 0, mix_base = 20;
+        
+        std::atomic<int> read_count{0}, write_count{0}; 
+        int mix_base = 20;
         cout << "Running " << num_operations << " operations" << endl;
-        auto start = std::chrono::high_resolution_clock::now();
+        /* auto start = std::chrono::high_resolution_clock::now();
         for (int i = 0; i < num_operations; ++i) {
 
             bool write = (i % mix_base) < num_mix;
@@ -388,10 +390,61 @@ int main(int argc, char *argv[]) {
                     }
                 }
         }
+        */
 
+        // ******* START OF CONCURRENT LOGIC *******
+        auto run_operations = [&](int thread_id) {
+            std::default_random_engine e1(thread_id + 1);
+            std::default_random_engine e2(thread_id + 100);
+            std::default_random_engine e3(thread_id + 200);
+
+            std::uniform_int_distribution<uint64_t> uniform_dist_file_read(0, keys.size() - 1);
+            std::uniform_int_distribution<uint64_t> uniform_dist_file_write(0, keys.size() - 1);
+            std::uniform_int_distribution<uint64_t> uniform_dist_file_value(0, values.size() - adgMod::value_size);
+
+            for (int i = 0; i < (num_operations / num_threads); ++i) {
+                bool write = (i % mix_base) < num_mix;
+
+                if (write) {
+                    uint64_t index = uniform_dist_file_write(e1);
+                    std::string value_chunk(values.data() + uniform_dist_file_value(e3), adgMod::value_size);
+                    auto status = db->Put(write_options, keys[index], value_chunk);
+                    assert(status.ok() && "File Put Error");
+                    write_count++;
+                } else {
+                    uint64_t index = uniform_dist_file_read(e2);
+                    std::string value;
+                    auto status = db->Get(read_options, keys[index], &value);
+                    if (!status.ok()) {
+                        std::cout << keys[index] << " Not Found" << std::endl;
+                    }
+                    read_count++;
+                }
+            }
+        };
+
+        std::vector<std::thread> threads;
+        auto start = std::chrono::high_resolution_clock::now();
+        for (int i = 0; i < num_threads; ++i) 
+            threads.emplace_back(run_operations, i);
+        for (auto& t : threads) 
+            t.join();
+        auto end = std::chrono::high_resolution_clock::now();
         // ******* END OF CONCURRENT LOGIC *******
 
-
+        cout << "total reads: " << read_count << " | total writes: " << write_count << endl;
+        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+        double seconds = duration.count() / 1000000;
+        double throughput = num_operations / seconds;
+        
+        if (adgMod::MOD == 7)
+            cout << "Bourbon: ";
+        else if (adgMod::MOD == 8)
+            cout << "Wisckey: ";
+        cout << "Operations: " << num_operations
+                << ", Dataset: " << input_filename
+                << ", Duration: " << seconds << " seconds"
+                << ", Throughput: " << throughput/1000000 << " Mop/s" << std::endl;
 
             // if (pause) {
             //     if ((i + 1) % (num_operations / 10000) == 0) ::usleep(800000);
@@ -439,21 +492,6 @@ int main(int argc, char *argv[]) {
 
             
         // }
-        auto end = std::chrono::high_resolution_clock::now();
-        cout << "total reads: " << read_count << " | total writes: " << write_count << endl;
-        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-        double seconds = duration.count() / 1000000;
-        double throughput = num_operations / seconds;
-        
-        if (adgMod::MOD == 7)
-            cout << "Bourbon: ";
-        else if (adgMod::MOD == 8)
-            cout << "Wisckey: ";
-        cout << "Operations: " << num_operations
-                << ", Dataset: " << input_filename
-                << ", Duration: " << seconds << " seconds"
-                << ", Throughput: " << throughput << " op/s" 
-                << std::endl;
         // instance->PauseTimer(13, true);
 
 

@@ -364,6 +364,7 @@ int main(int argc, char *argv[]) {
 
         cout << "Starting up" << endl;
         status = DB::Open(options, db_location, &db);
+        cout << "Opened up" << endl;
         adgMod::db->WaitForBackground();
         Iterator* db_iter = length_range == 0 ? nullptr : db->NewIterator(read_options);
         assert(status.ok() && "Open Error");
@@ -390,81 +391,85 @@ int main(int argc, char *argv[]) {
             length_range = use_ycsb && ycsb_is_write[i] > 2 ? ycsb_is_write[i] - 100 : length_range;
 
             if (write) {
-                if (input_filename.empty()) {
-                    instance->StartTimer(10);
-                    status = db->Put(write_options, generate_key(to_string(distribution[i])), {values.data() + uniform_dist_value(e3), (uint64_t) adgMod::value_size});
-                    instance->PauseTimer(10);
-                } else {
+                // if (input_filename.empty()) {
+                //     instance->StartTimer(10);
+                //     status = db->Put(write_options, generate_key(to_string(distribution[i])), {values.data() + uniform_dist_value(e3), (uint64_t) adgMod::value_size});
+                //     instance->PauseTimer(10);
+                // } else {
                     uint64_t index;
-                    if (use_distribution) {
-                        index = distribution[i];
-                    } else if (load_type == 0) {
-                        index = write_i++ % keys.size();
-                    } else {
+                    // if (use_distribution) {
+                    //     cout << "one index\n";
+                    //     index = distribution[i];
+                    // } else if (load_type == 0) {
+                    //     cout << "two index\n";
+                    //     index = write_i++ % keys.size();
+                    // } else {
+                    //     cout << "three index\n";
                         index = uniform_dist_file(e1) % (keys.size() - 1);
-                    }
+                    // }
 
-                    instance->StartTimer(10);
-                    if (use_ycsb && ycsb_is_write[i] == 2) {
-                        status = db->Put(write_options, generate_key(to_string(10000000000 + index)), {values.data() + uniform_dist_value(e3), (uint64_t) adgMod::value_size});
-                    } else {
+                    // instance->StartTimer(10);
+                    // if (use_ycsb && ycsb_is_write[i] == 2) {
+                    //     status = db->Put(write_options, generate_key(to_string(10000000000 + index)), {values.data() + uniform_dist_value(e3), (uint64_t) adgMod::value_size});
+                    // } else {
                         // cout << "write "  << i << " | key: " << keys[index] << endl;
                         write_count++;
                         status = db->Put(write_options, keys[index], {values.data() + uniform_dist_value(e3), (uint64_t) adgMod::value_size});
                         assert(status.ok() && "File Put Error");
-                    }
-                    instance->PauseTimer(10);
-                    assert(status.ok() && "Mix Put Error");
+                    // }
+                    // instance->PauseTimer(10);
+                    // assert(status.ok() && "Mix Put Error");
                     //cout << index << endl;
                 }
-            } else if (length_range != 0) {
-                // Seek
-                if (input_filename.empty()) {
-                    instance->StartTimer(4);
-                    db_iter->Seek(generate_key(to_string(distribution[i])));
-                    instance->PauseTimer(4);
-                } else {
-                    uint64_t index = use_distribution ? distribution[i] : uniform_dist_file2(e2) % (keys.size() - 1);
-                    index = index >= length_range ? index - length_range : 0;
-                    const string& key = keys[index];
-                    instance->StartTimer(4);
-                    db_iter->Seek(key);
-                    instance->PauseTimer(4);
-                }
+            // } else if (length_range != 0) {
+            //     // Seek
+            //     if (input_filename.empty()) {
+            //         instance->StartTimer(4);
+            //         db_iter->Seek(generate_key(to_string(distribution[i])));
+            //         instance->PauseTimer(4);
+            //     } else {
+            //         uint64_t index = use_distribution ? distribution[i] : uniform_dist_file2(e2) % (keys.size() - 1);
+            //         index = index >= length_range ? index - length_range : 0;
+            //         const string& key = keys[index];
+            //         instance->StartTimer(4);
+            //         db_iter->Seek(key);
+            //         instance->PauseTimer(4);
+            //     }
                 
-                // Range
-                instance->StartTimer(17);
-                for (int r = 0; r < length_range; ++r) {
-                    if (!db_iter->Valid()) break;
-                    Slice key = db_iter->key();
-                    string value = db_iter->value().ToString();
-                    // cout << key.ToString() << value << endl;
-                    // value.clear();
-                    db_iter->Next();
-                }
-                instance->PauseTimer(17);
-            } else {
+            //     // Range
+            //     instance->StartTimer(17);
+            //     for (int r = 0; r < length_range; ++r) {
+            //         if (!db_iter->Valid()) break;
+            //         Slice key = db_iter->key();
+            //         string value = db_iter->value().ToString();
+            //         // cout << key.ToString() << value << endl;
+            //         // value.clear();
+            //         db_iter->Next();
+            //     }
+            //     instance->PauseTimer(17);
+            // } 
+            else {
                 string value;
-                if (input_filename.empty()) {
-                    instance->StartTimer(4);
-                    status = db->Get(read_options, generate_key(to_string(distribution[i])), &value);
-                    instance->PauseTimer(4);
-                    if (!status.ok()) {
-                        cout << distribution[i] << " Not Found" << endl;
-                        //assert(status.ok() && "File Get Error");
-                    }
-                } else {
+                // if (input_filename.empty()) {
+                //     instance->StartTimer(4);
+                //     status = db->Get(read_options, generate_key(to_string(distribution[i])), &value);
+                //     instance->PauseTimer(4);
+                //     if (!status.ok()) {
+                //         cout << distribution[i] << " Not Found" << endl;
+                //         //assert(status.ok() && "File Get Error");
+                //     }
+                // } else {
                     uint64_t index = use_distribution ? distribution[i] : uniform_dist_file2(e2) % (keys.size() - 1);
                     const string& key = keys[index];
-                    instance->StartTimer(4);
-                    if (insert_bound != 0 && index > insert_bound) {
-                        status = db->Get(read_options, generate_key(to_string(10000000000 + index)), &value);
-                    } else {
-                        // cout << "read " << i << " | key: " << key << endl;
+                //     instance->StartTimer(4);
+                //     if (insert_bound != 0 && index > insert_bound) {
+                //         status = db->Get(read_options, generate_key(to_string(10000000000 + index)), &value);
+                //     } else {
+                //         // cout << "read " << i << " | key: " << key << endl;
                         status = db->Get(read_options, key, &value);
                         read_count++;
-                    }
-                    instance->PauseTimer(4);
+                    // }
+                    // instance->PauseTimer(4);
 
                     //cout << "Get " << key << " : " << value << endl;
                     if (!status.ok()) {
@@ -519,7 +524,7 @@ int main(int argc, char *argv[]) {
             // }
 
             
-        }
+        // }
         auto end = std::chrono::high_resolution_clock::now();
         cout << "total reads: " << read_count << " | total writes: " << write_count << endl;
         auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
@@ -531,6 +536,7 @@ int main(int argc, char *argv[]) {
         else if (adgMod::MOD == 8)
             cout << "Wisckey: ";
         cout << "Operations: " << num_operations
+                << ", Dataset: " << input_filename
                 << ", Duration: " << seconds << " seconds"
                 << ", Throughput: " << throughput << " op/s" 
                 << std::endl;

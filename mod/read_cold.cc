@@ -25,8 +25,6 @@ using std::map;
 using std::ifstream;
 using std::string;
 
-int mix_base = 20;
-
 class NumericalComparator : public Comparator {
 public:
     NumericalComparator() = default;
@@ -217,11 +215,6 @@ int main(int argc, char *argv[]) {
     if (copy_out) {
         system("sync; echo 3 | sudo tee /proc/sys/vm/drop_caches");
     }
-
-    if (num_mix > 1000) {
-        mix_base = 1000;
-        num_mix -= 1000;
-    }
     
     for (size_t iteration = 0; iteration < num_iteration; ++iteration) {
         if (copy_out) {
@@ -369,26 +362,13 @@ int main(int argc, char *argv[]) {
         Iterator* db_iter = length_range == 0 ? nullptr : db->NewIterator(read_options);
         assert(status.ok() && "Open Error");
 
-
-        uint64_t last_read = 0, last_write = 0;
-        int last_level = 0, last_file = 0, last_baseline = 0, last_succeeded = 0, last_false = 0, last_compaction = 0, last_learn = 0;
-        std::vector<uint64_t> detailed_times;
-        bool start_new_event = true;
-
-        // instance->StartTimer(13);
-        uint64_t write_i = 0;
-        int read_count = 0, write_count = 0;
+        // ******* START OF CONCURRENT LOGIC *******
+        int read_count = 0, write_count = 0, mix_base = 20;
         cout << "Running " << num_operations << " operations" << endl;
         auto start = std::chrono::high_resolution_clock::now();
         for (int i = 0; i < num_operations; ++i) {
 
-            if (start_new_event) {
-                detailed_times.push_back(instance->GetTime());
-                start_new_event = false;
-            }
-
-            bool write = use_ycsb ? ycsb_is_write[i] == 1 || ycsb_is_write[i] == 2 : (i % mix_base) < num_mix;
-            length_range = use_ycsb && ycsb_is_write[i] > 2 ? ycsb_is_write[i] - 100 : length_range;
+            bool write = (i % mix_base) < num_mix;
 
             if (write) {
                     uint64_t index;
@@ -408,6 +388,10 @@ int main(int argc, char *argv[]) {
                     }
                 }
         }
+
+        // ******* END OF CONCURRENT LOGIC *******
+
+
 
             // if (pause) {
             //     if ((i + 1) % (num_operations / 10000) == 0) ::usleep(800000);
@@ -478,7 +462,6 @@ int main(int argc, char *argv[]) {
         // for (int s = 0; s < times.size(); ++s) {
         //     times[s].push_back(instance->ReportTime(s));
         // }
-        adgMod::db->WaitForBackground();
         // sleep(10);
 
 
@@ -497,8 +480,7 @@ int main(int argc, char *argv[]) {
         // }
 
         // adgMod::learn_cb_model->Report();
-
-        delete db_iter;
+        adgMod::db->WaitForBackground();
         delete db;
     }
 

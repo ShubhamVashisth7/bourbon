@@ -1,0 +1,1 @@
+import sys; open(sys.argv[2],'w').writelines(f"{i}\n" for i in range(int(sys.argv[1])))

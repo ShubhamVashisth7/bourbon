@@ -319,9 +319,12 @@ int main(int argc, char *argv[]) {
                 }
                 current->FileLearn();
             }
-            cout << "Shutting down" << endl;
-            adgMod::db->WaitForBackground();
-            delete db;
+            
+            if (key_size <= 16 || read_write_percent != 1.0) {
+                cout << "Shutting down" << endl;
+                adgMod::db->WaitForBackground();
+                delete db;
+            }
 
             //keys.reserve(100000000000 / adgMod::value_size);
             // if (!input_filename.empty()) {
@@ -340,8 +343,6 @@ int main(int argc, char *argv[]) {
             fresh_write = false;
         }
 
-
-
         if (copy_out) {
             string db_location_mix = db_location + "_mix";
             string remove_command = "rm -rf " + db_location_mix;
@@ -352,16 +353,19 @@ int main(int argc, char *argv[]) {
             db_location = db_location_mix;
         }
 
-
-
-
         if (evict) system("sync; echo 3 | sudo tee /proc/sys/vm/drop_caches");
 
+        
+        if (key_size <= 16 || read_write_percent != 1.0) {
         cout << "Starting up" << endl;
         status = DB::Open(options, db_location, &db);
         cout << "Opened up" << endl;
+        }
         adgMod::db->WaitForBackground();
-        Iterator* db_iter = length_range == 0 ? nullptr : db->NewIterator(read_options);
+
+
+
+        // Iterator* db_iter = length_range == 0 ? nullptr : db->NewIterator(read_options);
         assert(status.ok() && "Open Error");
         
         std::atomic<int> read_count{0}, write_count{0}; 
@@ -438,7 +442,7 @@ int main(int argc, char *argv[]) {
                         std::string value;
                         auto status = db->Get(read_options, keys[index], &value);
                         if (!status.ok()) {
-                            std::cout << keys[index] << " Not Found" << std::endl;
+                            // std::cout << keys[index] << " Not Found" << std::endl;
                         }
                         read_count++;
                     }

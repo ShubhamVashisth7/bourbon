@@ -416,7 +416,7 @@ int main(int argc, char *argv[]) {
         Iterator* db_iter = length_range == 0 ? nullptr : db->NewIterator(read_options);
         assert(status.ok() && "Open Error");
         
-        std::atomic<int> read_count{0}, write_count{0}; 
+        // std::atomic<int> read_count{0}, write_count{0}; 
         // int mix_base = 20;
         cout << "Running " << num_operations << " operations" << endl;
 
@@ -430,70 +430,92 @@ int main(int argc, char *argv[]) {
         // ******* START OF CONCURRENT LOGIC *******
         auto run_operations = [&](int thread_id) {
             std::mt19937 e1(thread_id + 1);       // Write key selection
-            std::mt19937 e2(thread_id + 100);     // Read key selection
+            std::mt19937 e2(thread_id + 100);     // Read/range key selection
             std::mt19937 e3(thread_id + 200);     // Value offset selection
-
+        
             std::uniform_int_distribution<uint64_t> uniform_dist_file_read(0, keys.size() - 1);
             std::uniform_int_distribution<uint64_t> uniform_dist_file_write(0, keys.size() - 1);
             std::uniform_int_distribution<uint64_t> uniform_dist_file_value(0, values.size() - adgMod::value_size);
-
+        
             std::unique_ptr<ZipfianGenerator> zipf_gen;
             if (use_zipfian) {
                 zipf_gen = std::make_unique<ZipfianGenerator>(0, keys.size() - 1, theta_zipfian);
-                e2.seed(thread_id + 100); 
+                e2.seed(thread_id + 100);
             }
+        
+            int total_reads = static_cast<int>(num_operations * read_write_percent);
+            int total_writes = num_operations - total_reads;
+        
+            if (num_threads == 1) {
+                // Single-threaded: perform both writes and range reads
+                for (int i = 0; i < total_writes; ++i) {
+                    int index = use_zipfian ? zipf_gen->next() : uniform_dist_file_write(e1);
+                    std::string value_chunk(values.data() + uniform_dist_file_value(e3), adgMod::value_size);
+                    auto status = db->Put(write_options, keys[index], value_chunk);
+                    // write_count++;
+                }
+        
+                for (int i = 0; i < total_reads; ++i) {
+                    if (length_range != 0) {
+                        uint64_t index = use_zipfian ? zipf_gen->next() : uniform_dist_file_read(e2);
+                        index = (index >= length_range) ? index - length_range : 0;
+                        db_iter->Seek(keys[index]);
+                        for (int r = 0; r < length_range; ++r) {
+                            if (!db_iter->Valid()) break;
+                            Slice key = db_iter->key();
+                            std::string value = db_iter->value().ToString();
+                            db_iter->Next();
+                        }
+                        // read_count++;
 
-            if (read_write_percent == 1.0) {
-                // Read-only workload (no writer)
-                int reads_per_thread = num_operations / num_threads;
-                int extra_reads = (thread_id == 0) ? (num_operations % num_threads) : 0;
-                for (int i = 0; i < reads_per_thread + extra_reads; ++i) {
-                    int index = use_zipfian ? zipf_gen->next() : uniform_dist_file_read(e2);
-                    std::string value;
-                    auto status = db->Get(read_options, keys[index], &value);
-                    read_count++;
+                    } else {
+                        int index = use_zipfian ? zipf_gen->next() : uniform_dist_file_read(e2);
+                        std::string value;
+                        auto status = db->Get(read_options, keys[index], &value);
+                        // read_count++;
+                    }
                 }
             } else {
-                if (num_threads == 1) {
-                    // Single thread does both reads and writes
-                    int total_reads = static_cast<int>(num_operations * read_write_percent);
-                    int total_writes = num_operations - total_reads;
-
+                if (thread_id == 0) {
+                    // Writer thread
                     for (int i = 0; i < total_writes; ++i) {
                         int index = use_zipfian ? zipf_gen->next() : uniform_dist_file_write(e1);
                         std::string value_chunk(values.data() + uniform_dist_file_value(e3), adgMod::value_size);
                         auto status = db->Put(write_options, keys[index], value_chunk);
-                        write_count++;
-                    }
-                    for (int i = 0; i < total_reads; ++i) {
-                        int index = use_zipfian ? zipf_gen->next() : uniform_dist_file_read(e2);
-                        std::string value;
-                        auto status = db->Get(read_options, keys[index], &value);
-                        read_count++;
-                    }
-                } else if (thread_id == 0) {
-                    // Writer thread
-                    int writes_to_do = num_operations - static_cast<int>(num_operations * read_write_percent);
-                    for (int i = 0; i < writes_to_do; ++i) {
-                        int index = use_zipfian ? zipf_gen->next() : uniform_dist_file_write(e1);
-                        std::string value_chunk(values.data() + uniform_dist_file_value(e3), adgMod::value_size);
-                        auto status = db->Put(write_options, keys[index], value_chunk);
-                        write_count++;
+                        // write_count++;
                     }
                 } else {
                     // Reader threads
-                    int reads_total = static_cast<int>(num_operations * read_write_percent);
-                    int reads_per_thread = reads_total / (num_threads - 1);
-                    int extra_reads = (thread_id == 1) ? (reads_total % (num_threads - 1)) : 0;
+                    int reads_per_thread = total_reads / (num_threads - 1);
+                    int extra_reads = (thread_id == 1) ? (total_reads % (num_threads - 1)) : 0;
+        
                     for (int i = 0; i < reads_per_thread + extra_reads; ++i) {
-                        int index = use_zipfian ? zipf_gen->next() : uniform_dist_file_read(e2);
-                        std::string value;
-                        auto status = db->Get(read_options, keys[index], &value);
-                        read_count++;
+                        if (length_range != 0) {
+                            uint64_t index = use_zipfian ? zipf_gen->next() : uniform_dist_file_read(e2);
+                            index = (index >= length_range) ? index - length_range : 0;
+        
+                            std::unique_ptr<Iterator> db_iter(db->NewIterator(read_options));
+                            db_iter->Seek(keys[index]);
+        
+                            for (int r = 0; r < length_range; ++r) {
+                                if (!db_iter->Valid()) break;
+                                Slice key = db_iter->key();
+                                std::string value = db_iter->value().ToString();
+                                db_iter->Next();
+                            }
+        
+                            // read_count++;
+                        } else {
+                            int index = use_zipfian ? zipf_gen->next() : uniform_dist_file_read(e2);
+                            std::string value;
+                            auto status = db->Get(read_options, keys[index], &value);
+                            // read_count++;
+                        }
                     }
                 }
             }
         };
+        
 
         std::vector<std::thread> threads;
         auto start = std::chrono::high_resolution_clock::now();
@@ -508,7 +530,7 @@ int main(int argc, char *argv[]) {
         // ******* END OF CONCURRENT LOGIC *******
 
 
-        cout << "total reads: " << read_count << " | total writes: " << write_count << endl;
+        // cout << "total reads: " << read_count << " | total writes: " << write_count << endl;
         auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
         double seconds = duration.count() / 1000000;
         double throughput = num_operations / seconds;

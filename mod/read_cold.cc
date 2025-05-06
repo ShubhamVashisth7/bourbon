@@ -413,10 +413,10 @@ int main(int argc, char *argv[]) {
         cout << "Opened up" << endl;
         }
         adgMod::db->WaitForBackground();
-        Iterator* db_iter = length_range == 0 ? nullptr : db->NewIterator(read_options);
+        // Iterator* db_iter = length_range == 0 ? nullptr : db->NewIterator(read_options);
         assert(status.ok() && "Open Error");
         
-        // std::atomic<int> read_count{0}, write_count{0}; 
+        std::atomic<int> read_count{0}, write_count{0}; 
         // int mix_base = 20;
         cout << "Running " << num_operations << " operations" << endl;
 
@@ -427,108 +427,47 @@ int main(int argc, char *argv[]) {
         else
             use_zipfian = false;
 
-        // ******* START OF CONCURRENT LOGIC *******
+        // ******* START OF CORRECT YCSB F SINGLE-THREADED LOGIC *******
         auto run_operations = [&](int thread_id) {
-            std::mt19937 e1(thread_id + 1);       // Write key selection
-            std::mt19937 e2(thread_id + 100);     // Read/range key selection
-            std::mt19937 e3(thread_id + 200);     // Value offset selection
-        
-            std::uniform_int_distribution<uint64_t> uniform_dist_file_read(0, keys.size() - 1);
-            std::uniform_int_distribution<uint64_t> uniform_dist_file_write(0, keys.size() - 1);
-            std::uniform_int_distribution<uint64_t> uniform_dist_file_value(0, values.size() - adgMod::value_size);
-        
-            std::unique_ptr<ZipfianGenerator> zipf_gen;
-            if (use_zipfian) {
-                zipf_gen = std::make_unique<ZipfianGenerator>(0, keys.size() - 1, theta_zipfian);
-                e2.seed(thread_id + 100);
-            }
-        
-            int total_reads = static_cast<int>(num_operations * read_write_percent);
-            int total_writes = num_operations - total_reads;
-        
-            if (num_threads == 1) {
-                // Single-threaded: perform both writes and range reads
-                for (int i = 0; i < total_writes; ++i) {
-                    int index = use_zipfian ? zipf_gen->next() : uniform_dist_file_write(e1);
-                    std::string value_chunk(values.data() + uniform_dist_file_value(e3), adgMod::value_size);
-                    auto status = db->Put(write_options, keys[index], value_chunk);
-                    // write_count++;
-                }
-        
-                for (int i = 0; i < total_reads; ++i) {
-                    if (length_range != 0) {
-                        uint64_t index = use_zipfian ? zipf_gen->next() : uniform_dist_file_read(e2);
-                        index = (index >= length_range) ? index - length_range : 0;
-                        db_iter->Seek(keys[index]);
-                        for (int r = 0; r < length_range; ++r) {
-                            if (!db_iter->Valid()) break;
-                            Slice key = db_iter->key();
-                            std::string value = db_iter->value().ToString();
-                            db_iter->Next();
-                        }
-                        // read_count++;
+        std::default_random_engine rng(thread_id + 1);
+        std::uniform_int_distribution<uint64_t> dist_key(0, keys.size() - 1);
+        std::uniform_int_distribution<uint64_t> dist_val(0, values.size() - adgMod::value_size);
+        std::bernoulli_distribution dist_operation(0.5); // 50% chance for read or modify
 
-                    } else {
-                        int index = use_zipfian ? zipf_gen->next() : uniform_dist_file_read(e2);
-                        std::string value;
-                        auto status = db->Get(read_options, keys[index], &value);
-                        // read_count++;
-                    }
+        for (int i = 0; i < num_operations; ++i) {
+            uint64_t index = dist_key(rng);
+            if (dist_operation(rng)) {
+                // Read operation
+                std::string value;
+                auto status = db->Get(read_options, keys[index], &value);
+                if (!status.ok()) {
+                    std::cout << keys[index] << " Not Found" << std::endl;
                 }
+                read_count++;
             } else {
-                if (thread_id == 0) {
-                    // Writer thread
-                    for (int i = 0; i < total_writes; ++i) {
-                        int index = use_zipfian ? zipf_gen->next() : uniform_dist_file_write(e1);
-                        std::string value_chunk(values.data() + uniform_dist_file_value(e3), adgMod::value_size);
-                        auto status = db->Put(write_options, keys[index], value_chunk);
-                        // write_count++;
-                    }
+                // Read-modify-write
+                std::string value;
+                auto status = db->Get(read_options, keys[index], &value);
+                if (!status.ok()) {
+                    std::cout << keys[index] << " Not Found (modify)" << std::endl;
                 } else {
-                    // Reader threads
-                    int reads_per_thread = total_reads / (num_threads - 1);
-                    int extra_reads = (thread_id == 1) ? (total_reads % (num_threads - 1)) : 0;
-        
-                    for (int i = 0; i < reads_per_thread + extra_reads; ++i) {
-                        if (length_range != 0) {
-                            uint64_t index = use_zipfian ? zipf_gen->next() : uniform_dist_file_read(e2);
-                            index = (index >= length_range) ? index - length_range : 0;
-        
-                            std::unique_ptr<Iterator> db_iter(db->NewIterator(read_options));
-                            db_iter->Seek(keys[index]);
-        
-                            for (int r = 0; r < length_range; ++r) {
-                                if (!db_iter->Valid()) break;
-                                Slice key = db_iter->key();
-                                std::string value = db_iter->value().ToString();
-                                db_iter->Next();
-                            }
-        
-                            // read_count++;
-                        } else {
-                            int index = use_zipfian ? zipf_gen->next() : uniform_dist_file_read(e2);
-                            std::string value;
-                            auto status = db->Get(read_options, keys[index], &value);
-                            // read_count++;
-                        }
-                    }
+                    read_count++;
                 }
-            }
-        };
-        
 
-        std::vector<std::thread> threads;
+                std::string new_value(values.data() + dist_val(rng), adgMod::value_size);
+                status = db->Put(write_options, keys[index], new_value);
+                assert(status.ok() && "Modify Put Error");
+                write_count++;
+            }
+        }
+        };
+
         auto start = std::chrono::high_resolution_clock::now();
 
-        for (int i = 0; i < num_threads; ++i) 
-            threads.emplace_back(run_operations, i);
-
-        for (auto& t : threads) 
-            t.join();
+        run_operations(0); // Single-threaded YCSB F logic
 
         auto end = std::chrono::high_resolution_clock::now();
-        // ******* END OF CONCURRENT LOGIC *******
-
+        // ******* END OF CORRECT YCSB F SINGLE-THREADED LOGIC *******
 
         // cout << "total reads: " << read_count << " | total writes: " << write_count << endl;
         auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
@@ -617,7 +556,7 @@ int main(int argc, char *argv[]) {
 
         // adgMod::learn_cb_model->Report();
         adgMod::db->WaitForBackground();
-        delete db_iter;
+        // delete db_iter;
         delete db;
     }
 

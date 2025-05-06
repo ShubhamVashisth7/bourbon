@@ -27,6 +27,50 @@ using std::map;
 using std::ifstream;
 using std::string;
 
+class ZipfianGenerator {
+    private:
+        long min_;
+        long max_;
+        long items_;
+        double theta_;
+        double zetan_;
+        double alpha_;
+        double eta_;
+        double zeta2theta_;
+        std::mt19937 gen_;
+        std::uniform_real_distribution<double> dist_;
+    
+        double zeta(long st, long n) {
+            double sum = 0.0;
+            for (long i = st; i < n; i++) {
+                sum += 1.0 / std::pow(i + 1, theta_);
+            }
+            return sum;
+        }
+    
+    public:
+        ZipfianGenerator(long min, long max, double theta) 
+            : min_(min), max_(max), theta_(theta), 
+              gen_(62), dist_(0.0, 1.0) {
+            items_ = max_ - min_ + 1;
+            zeta2theta_ = zeta(0, 2);
+            zetan_ = zeta(0, items_);
+            alpha_ = 1.0 / (1.0 - theta_);
+            eta_ = (1 - std::pow(2.0/items_, 1 - theta_)) / (1 - zeta2theta_/zetan_);
+        }
+    
+        long next() {
+            double u = dist_(gen_);
+            double uz = u * zetan_;
+            
+            if (uz < 1.0) return min_;
+            if (uz < 1.0 + std::pow(0.5, theta_)) return min_ + 1;
+            
+            long ret = min_ + (long)(items_ * std::pow(eta_ * u - eta_ + 1, alpha_));
+            return std::min(std::max(ret, min_), max_);
+        }
+    };
+
 class NumericalComparator : public Comparator {
 public:
     NumericalComparator() = default;
@@ -41,7 +85,6 @@ public:
     virtual void FindShortestSeparator(std::string* start, const Slice& limit) const { return; };
     virtual void FindShortSuccessor(std::string* key) const { return; };
 };
-
 
 void PutAndPrefetch(int lower, int higher, vector<string>& keys) {
     adgMod::Stats* instance = adgMod::Stats::GetInstance();
@@ -82,7 +125,7 @@ enum LoadType {
 int main(int argc, char *argv[]) {
     int num_operations, num_iteration, num_mix;
     float test_num_segments_base;
-    float num_pair_step, read_write_percent;
+    float num_pair_step, read_write_percent, theta_zipfian;
     string db_location, profiler_out, input_filename, distribution_filename, ycsb_filename;
     bool print_single_timing, print_file_info, evict, unlimit_fd, use_distribution = false, pause, use_ycsb = false;
     bool change_level_load, change_file_load, change_level_learning, change_file_learning;
@@ -124,7 +167,9 @@ int main(int argc, char *argv[]) {
             ("insert", "insert new value", cxxopts::value<int>(insert_bound)->default_value("0"))
             ("range", "use range query and specify length", cxxopts::value<int>(length_range)->default_value("0"))
             ("t,threads", "threads", cxxopts::value<int>(num_threads)->default_value("16"))
+            ("zipfian", "zipfian distribution theta (0.0 disables)", cxxopts::value<float>(theta_zipfian)->default_value("0.0"))
             ("seed", "random ssed", cxxopts::value<int>(seed)->default_value("62"));
+
     auto result = commandline_options.parse(argc, argv);
     if (result.count("help")) {
         printf("%s", commandline_options.help().c_str());
@@ -263,6 +308,12 @@ int main(int argc, char *argv[]) {
                     }
                     break;
                 }
+                case Reversed: { 
+                    for (int i = keys.size() - 1; i >= 0; --i) {
+                        chunks.emplace_back(i, i + 1);
+                    }
+                    break;
+                }    
                 case ReversedChunk: {
                     for (int cut = cut_size - 1; cut >= 0; --cut) {
                         chunks.emplace_back(keys.size() * cut / cut_size, keys.size() * (cut + 1) / cut_size);
@@ -362,88 +413,82 @@ int main(int argc, char *argv[]) {
         cout << "Opened up" << endl;
         }
         adgMod::db->WaitForBackground();
-
-
-
-        // Iterator* db_iter = length_range == 0 ? nullptr : db->NewIterator(read_options);
+        Iterator* db_iter = length_range == 0 ? nullptr : db->NewIterator(read_options);
         assert(status.ok() && "Open Error");
         
         std::atomic<int> read_count{0}, write_count{0}; 
         // int mix_base = 20;
         cout << "Running " << num_operations << " operations" << endl;
-        /* auto start = std::chrono::high_resolution_clock::now();
-        for (int i = 0; i < num_operations; ++i) {
 
-            bool write = (i % mix_base) < num_mix;
+        bool use_zipfian;
 
-            if (write) {
-                    uint64_t index;
-                    index = uniform_dist_file(e1) % (keys.size() - 1);
-                    write_count++;
-                    status = db->Put(write_options, keys[index], {values.data() + uniform_dist_value(e3), (uint64_t) adgMod::value_size});
-                    assert(status.ok() && "File Put Error");
-                }
-            else {
-                    string value;
-                    uint64_t index = use_distribution ? distribution[i] : uniform_dist_file2(e2) % (keys.size() - 1);
-                    const string& key = keys[index];
-                    status = db->Get(read_options, key, &value);
-                    read_count++;
-                    if (!status.ok()) {
-                        cout << key << " Not Found" << endl;
-                    }
-                }
-        }
-        */
+        if (theta_zipfian > 0.0)
+            use_zipfian = true;
+        else
+            use_zipfian = false;
 
         // ******* START OF CONCURRENT LOGIC *******
         auto run_operations = [&](int thread_id) {
-            std::default_random_engine e1(thread_id + 1);
-            std::default_random_engine e2(thread_id + 100);
-            std::default_random_engine e3(thread_id + 200);
-        
+            std::mt19937 e1(thread_id + 1);       // Write key selection
+            std::mt19937 e2(thread_id + 100);     // Read key selection
+            std::mt19937 e3(thread_id + 200);     // Value offset selection
+
             std::uniform_int_distribution<uint64_t> uniform_dist_file_read(0, keys.size() - 1);
             std::uniform_int_distribution<uint64_t> uniform_dist_file_write(0, keys.size() - 1);
             std::uniform_int_distribution<uint64_t> uniform_dist_file_value(0, values.size() - adgMod::value_size);
-        
+
+            std::unique_ptr<ZipfianGenerator> zipf_gen;
+            if (use_zipfian) {
+                zipf_gen = std::make_unique<ZipfianGenerator>(0, keys.size() - 1, theta_zipfian);
+                e2.seed(thread_id + 100); 
+            }
+
             if (read_write_percent == 1.0) {
-                // Special case: all reads i.e. no writer thread
-                int reads_total = num_operations;
-                int reads_per_thread = reads_total / num_threads;
-                int extra_reads = (thread_id == 0) ? (reads_total % num_threads) : 0;
-        
+                // Read-only workload (no writer)
+                int reads_per_thread = num_operations / num_threads;
+                int extra_reads = (thread_id == 0) ? (num_operations % num_threads) : 0;
                 for (int i = 0; i < reads_per_thread + extra_reads; ++i) {
-                    uint64_t index = uniform_dist_file_read(e2);
+                    int index = use_zipfian ? zipf_gen->next() : uniform_dist_file_read(e2);
                     std::string value;
                     auto status = db->Get(read_options, keys[index], &value);
-                    if (!status.ok()) {
-                        std::cout << keys[index] << " Not Found" << std::endl;
-                    }
                     read_count++;
                 }
-            }
-            else {
-                if (thread_id == 0) {
-                    int writes_to_do = num_operations - num_operations * read_write_percent;
-                    for (int i = 0; i < writes_to_do; ++i) {
-                        uint64_t index = uniform_dist_file_write(e1);
+            } else {
+                if (num_threads == 1) {
+                    // Single thread does both reads and writes
+                    int total_reads = static_cast<int>(num_operations * read_write_percent);
+                    int total_writes = num_operations - total_reads;
+
+                    for (int i = 0; i < total_writes; ++i) {
+                        int index = use_zipfian ? zipf_gen->next() : uniform_dist_file_write(e1);
                         std::string value_chunk(values.data() + uniform_dist_file_value(e3), adgMod::value_size);
                         auto status = db->Put(write_options, keys[index], value_chunk);
-                        assert(status.ok() && "File Put Error");
+                        write_count++;
+                    }
+                    for (int i = 0; i < total_reads; ++i) {
+                        int index = use_zipfian ? zipf_gen->next() : uniform_dist_file_read(e2);
+                        std::string value;
+                        auto status = db->Get(read_options, keys[index], &value);
+                        read_count++;
+                    }
+                } else if (thread_id == 0) {
+                    // Writer thread
+                    int writes_to_do = num_operations - static_cast<int>(num_operations * read_write_percent);
+                    for (int i = 0; i < writes_to_do; ++i) {
+                        int index = use_zipfian ? zipf_gen->next() : uniform_dist_file_write(e1);
+                        std::string value_chunk(values.data() + uniform_dist_file_value(e3), adgMod::value_size);
+                        auto status = db->Put(write_options, keys[index], value_chunk);
                         write_count++;
                     }
                 } else {
-                    int reads_total = num_operations * read_write_percent;
+                    // Reader threads
+                    int reads_total = static_cast<int>(num_operations * read_write_percent);
                     int reads_per_thread = reads_total / (num_threads - 1);
-                    int extra_reads = (thread_id == 1) ? (reads_total % (num_threads - 1)) : 0; 
-        
+                    int extra_reads = (thread_id == 1) ? (reads_total % (num_threads - 1)) : 0;
                     for (int i = 0; i < reads_per_thread + extra_reads; ++i) {
-                        uint64_t index = uniform_dist_file_read(e2);
+                        int index = use_zipfian ? zipf_gen->next() : uniform_dist_file_read(e2);
                         std::string value;
                         auto status = db->Get(read_options, keys[index], &value);
-                        if (!status.ok()) {
-                            // std::cout << keys[index] << " Not Found" << std::endl;
-                        }
                         read_count++;
                     }
                 }
@@ -461,6 +506,7 @@ int main(int argc, char *argv[]) {
 
         auto end = std::chrono::high_resolution_clock::now();
         // ******* END OF CONCURRENT LOGIC *******
+
 
         cout << "total reads: " << read_count << " | total writes: " << write_count << endl;
         auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
@@ -549,6 +595,7 @@ int main(int argc, char *argv[]) {
 
         // adgMod::learn_cb_model->Report();
         adgMod::db->WaitForBackground();
+        delete db_iter;
         delete db;
     }
 

@@ -6,13 +6,13 @@ cmake_minimum_required(VERSION 3.7)
 # Keep the version below in sync with the one in db.h
 project(leveldb VERSION 1.22.0 LANGUAGES C CXX)
 
-# This project can use C11, but will gracefully decay down to C89.
+# This project can use 14, but will gracefully decay down to C89.
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED OFF)
 set(CMAKE_C_EXTENSIONS OFF)
 
-# This project requires C++11.
-set(CMAKE_CXX_STANDARD 11)
+# This project requires C++14.
+set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -63,7 +63,7 @@ include(CheckCXXSymbolExists)
 # we're including the header from C++, and feature detection should use the same
 # compiler language that the project will use later. Principles aside, some
 # versions of do not expose fdatasync() in <unistd.h> in standard C mode
-# (-std=c11), but do expose the function in standard C++ mode (-std=c++11).
+# (-std=14), but do expose the function in standard C++ mode (-std=c++14).
 check_cxx_symbol_exists(fdatasync "unistd.h" HAVE_FDATASYNC)
 check_cxx_symbol_exists(F_FULLFSYNC "fcntl.h" HAVE_FULLFSYNC)
 

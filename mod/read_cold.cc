@@ -15,6 +15,8 @@
 #include <random>
 #include <thread>
 #include <atomic>
+#include "util/zipf.h"
+#include "util/latest-generator.h"
 
 using namespace leveldb;
 using namespace adgMod;
@@ -84,10 +86,11 @@ int main(int argc, char *argv[]) {
     float test_num_segments_base;
     float num_pair_step, read_write_percent;
     string db_location, profiler_out, input_filename, distribution_filename, ycsb_filename;
-    bool print_single_timing, print_file_info, evict, unlimit_fd, use_distribution = false, pause, use_ycsb = false;
+    bool print_single_timing, print_file_info, evict, unlimit_fd, use_distribution = false, pause;
     bool change_level_load, change_file_load, change_level_learning, change_file_learning;
     int load_type, insert_bound, length_range, num_threads, seed;
     string db_location_copy;
+    char use_ycsb;
 
     cxxopts::Options commandline_options("leveldb read test", "Testing leveldb read performance.");
     commandline_options.add_options()
@@ -124,6 +127,7 @@ int main(int argc, char *argv[]) {
             ("insert", "insert new value", cxxopts::value<int>(insert_bound)->default_value("0"))
             ("range", "use range query and specify length", cxxopts::value<int>(length_range)->default_value("0"))
             ("t,threads", "threads", cxxopts::value<int>(num_threads)->default_value("16"))
+            ("use_ycsb", "run ycsb workloads (a,b,c,d,e,f)", cxxopts::value<char>(use_ycsb)->default_value("0"))
             ("seed", "random ssed", cxxopts::value<int>(seed)->default_value("62"));
     auto result = commandline_options.parse(argc, argv);
     if (result.count("help")) {
@@ -363,14 +367,10 @@ int main(int argc, char *argv[]) {
         }
         adgMod::db->WaitForBackground();
 
-
-
         // Iterator* db_iter = length_range == 0 ? nullptr : db->NewIterator(read_options);
         assert(status.ok() && "Open Error");
-        
-        std::atomic<int> read_count{0}, write_count{0}; 
-        // int mix_base = 20;
         cout << "Running " << num_operations << " operations" << endl;
+    
         /* auto start = std::chrono::high_resolution_clock::now();
         for (int i = 0; i < num_operations; ++i) {
 
@@ -396,85 +396,213 @@ int main(int argc, char *argv[]) {
         }
         */
 
-        // ******* START OF CONCURRENT LOGIC *******
-        auto run_operations = [&](int thread_id) {
-            std::default_random_engine e1(thread_id + 1);
-            std::default_random_engine e2(thread_id + 100);
-            std::default_random_engine e3(thread_id + 200);
-        
-            std::uniform_int_distribution<uint64_t> uniform_dist_file_read(0, keys.size() - 1);
-            std::uniform_int_distribution<uint64_t> uniform_dist_file_write(0, keys.size() - 1);
-            std::uniform_int_distribution<uint64_t> uniform_dist_file_value(0, values.size() - adgMod::value_size);
-        
-            if (read_write_percent == 1.0) {
-                // Special case: all reads i.e. no writer thread
-                int reads_total = num_operations;
-                int reads_per_thread = reads_total / num_threads;
-                int extra_reads = (thread_id == 0) ? (reads_total % num_threads) : 0;
-        
-                for (int i = 0; i < reads_per_thread + extra_reads; ++i) {
-                    uint64_t index = uniform_dist_file_read(e2);
-                    std::string value;
-                    auto status = db->Get(read_options, keys[index], &value);
-                    if (!status.ok()) {
-                        std::cout << keys[index] << " Not Found" << std::endl;
-                    }
-                    read_count++;
-                }
-            }
-            else {
-                if (thread_id == 0) {
-                    int writes_to_do = num_operations - num_operations * read_write_percent;
-                    for (int i = 0; i < writes_to_do; ++i) {
-                        uint64_t index = uniform_dist_file_write(e1);
-                        std::string value_chunk(values.data() + uniform_dist_file_value(e3), adgMod::value_size);
-                        auto status = db->Put(write_options, keys[index], value_chunk);
-                        assert(status.ok() && "File Put Error");
-                        write_count++;
-                    }
-                } else {
-                    int reads_total = num_operations * read_write_percent;
-                    int reads_per_thread = reads_total / (num_threads - 1);
-                    int extra_reads = (thread_id == 1) ? (reads_total % (num_threads - 1)) : 0; 
-        
+        if (use_ycsb == '0') {
+            // ******* START OF CONCURRENT LOGIC *******
+            std::atomic<int> read_count{0}, write_count{0}; // comment this while benchmarking (only for verifying total number of reads & writes)
+            auto run_operations = [&](int thread_id) {
+                std::default_random_engine e1(thread_id + 1);
+                std::default_random_engine e2(thread_id + 100);
+                std::default_random_engine e3(thread_id + 200);
+            
+                std::uniform_int_distribution<uint64_t> uniform_dist_file_read(0, keys.size() - 1);
+                std::uniform_int_distribution<uint64_t> uniform_dist_file_write(0, keys.size() - 1);
+                std::uniform_int_distribution<uint64_t> uniform_dist_file_value(0, values.size() - adgMod::value_size);
+            
+                if (read_write_percent == 1.0) {
+                    // Special case: all reads i.e. no writer thread
+                    int reads_total = num_operations;
+                    int reads_per_thread = reads_total / num_threads;
+                    int extra_reads = (thread_id == 0) ? (reads_total % num_threads) : 0;
+            
                     for (int i = 0; i < reads_per_thread + extra_reads; ++i) {
                         uint64_t index = uniform_dist_file_read(e2);
                         std::string value;
                         auto status = db->Get(read_options, keys[index], &value);
                         if (!status.ok()) {
-                            // std::cout << keys[index] << " Not Found" << std::endl;
+                            std::cout << keys[index] << " Not Found" << std::endl;
                         }
                         read_count++;
                     }
                 }
+                else {
+                    if (thread_id == 0) {
+                        int writes_to_do = num_operations - num_operations * read_write_percent;
+                        for (int i = 0; i < writes_to_do; ++i) {
+                            uint64_t index = uniform_dist_file_write(e1);
+                            std::string value_chunk(values.data() + uniform_dist_file_value(e3), adgMod::value_size);
+                            auto status = db->Put(write_options, keys[index], value_chunk);
+                            assert(status.ok() && "File Put Error");
+                            write_count++;
+                        }
+                    } else {
+                        int reads_total = num_operations * read_write_percent;
+                        int reads_per_thread = reads_total / (num_threads - 1);
+                        int extra_reads = (thread_id == 1) ? (reads_total % (num_threads - 1)) : 0; 
+            
+                        for (int i = 0; i < reads_per_thread + extra_reads; ++i) {
+                            uint64_t index = uniform_dist_file_read(e2);
+                            std::string value;
+                            auto status = db->Get(read_options, keys[index], &value);
+                            if (!status.ok()) {
+                                // std::cout << keys[index] << " Not Found" << std::endl;
+                            }
+                            read_count++;
+                        }
+                    }
+                }
+            };
+
+            std::vector<std::thread> threads;
+            auto start = std::chrono::high_resolution_clock::now();
+
+            for (int i = 0; i < num_threads; ++i) 
+                threads.emplace_back(run_operations, i);
+
+            for (auto& t : threads) 
+                t.join();
+
+            auto end = std::chrono::high_resolution_clock::now();
+            // ******* END OF CONCURRENT LOGIC *******
+
+            cout << "total reads: " << read_count << " | total writes: " << write_count << endl;
+            auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+            double seconds = duration.count() / 1000000;
+            double throughput = num_operations / seconds;
+            
+            if (adgMod::MOD == 7)
+                cout << "Bourbon: ";
+            else if (adgMod::MOD == 8)
+                cout << "Wisckey: ";
+            cout << "Operations: " << num_operations
+                    << ", Dataset: " << input_filename
+                    << ", Duration: " << seconds << " seconds"
+                    << ", Throughput: " << throughput/1000000 << " Mop/s" << std::endl;
+        }
+
+        else {
+
+            // ******* START OF YCSB LOGIC *******
+
+            int read_count = 0, write_count = 0;
+            int scan_count = 0, insert_count = 0; // For Workload E only
+
+            init_zipf_generator(0, keys.size());
+
+   
+            if (use_ycsb == 'd' || use_ycsb == 'e') {
+                init_latestgen(keys.size());
             }
-        };
 
-        std::vector<std::thread> threads;
-        auto start = std::chrono::high_resolution_clock::now();
+            int read_weight = 0, write_weight = 0;
+            int scan_weight = 0, insert_weight = 0;
 
-        for (int i = 0; i < num_threads; ++i) 
-            threads.emplace_back(run_operations, i);
+            if (use_ycsb == 'a' || use_ycsb == 'f')
+                read_write_percent = 0.50;
+            else if (use_ycsb == 'b' || use_ycsb == 'd' || use_ycsb == 'e')
+                read_write_percent = 0.95;
+            else if (use_ycsb == 'c')
+                read_write_percent = 1.0;
 
-        for (auto& t : threads) 
-            t.join();
+            if (use_ycsb == 'e') {
+                scan_weight = 95;
+                insert_weight = 5;
+            } else {
+                read_weight = static_cast<int>(read_write_percent * 100);
+                write_weight = 100 - read_weight;
+            }
 
-        auto end = std::chrono::high_resolution_clock::now();
-        // ******* END OF CONCURRENT LOGIC *******
+            auto start = std::chrono::high_resolution_clock::now();
+            for (int i = 0; i < num_operations; ++i) {
+                long index = (use_ycsb == 'd' || use_ycsb == 'e')
+                    ? (next_value_latestgen() % keys.size())
+                    : (nextValue() % keys.size());
 
-        cout << "total reads: " << read_count << " | total writes: " << write_count << endl;
-        auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
-        double seconds = duration.count() / 1000000;
-        double throughput = num_operations / seconds;
-        
-        if (adgMod::MOD == 7)
-            cout << "Bourbon: ";
-        else if (adgMod::MOD == 8)
-            cout << "Wisckey: ";
-        cout << "Operations: " << num_operations
-                << ", Dataset: " << input_filename
-                << ", Duration: " << seconds << " seconds"
-                << ", Throughput: " << throughput/1000000 << " Mop/s" << std::endl;
+                if (use_ycsb == 'e') {
+                    if (scan_weight > 0) {
+                        // ---- Short Range SCAN (counted as one operation) ----
+                        int scan_length = (rand() % 100) + 1;
+                        std::unique_ptr<Iterator> it(db->NewIterator(read_options));
+                        it->Seek(keys[index]);
+                        int scanned = 0;
+                        while (it->Valid() && scanned < scan_length) {
+                            it->Next();
+                            scanned++;
+                        }
+                        scan_count++;
+                        scan_weight--;
+                    } else if (insert_weight > 0) {
+                        // ---- INSERT ----
+                        string value_data = generate_value(adgMod::value_size);
+                        Status s = db->Put(write_options, keys[index], value_data);
+                        if (s.ok()) insert_count++;
+                        else cout << "Insert failed: " << s.ToString() << endl;
+                        insert_weight--;
+                    }
+
+                    // Reset after 100 ops
+                    if (scan_weight == 0 && insert_weight == 0) {
+                        scan_weight = 95;
+                        insert_weight = 5;
+                    }
+                    continue; // Skip to next operation (skip A-D logic)
+                }
+
+                // ----------- Logic for workloads A–D / F ------------
+                if (read_weight > 0) {
+                    string value;
+                    Status s = db->Get(read_options, keys[index], &value);
+                    if (s.ok()) read_count++;
+                    else if (!s.IsNotFound()) cout << "Get failed: " << s.ToString() << endl;
+                    read_weight--;
+                } else if (write_weight > 0) {
+                    // Write operation (RMW for Workload F)
+                    if (use_ycsb == 'f') {
+                        // Read before write
+                        string existing_value;
+                        Status s_read = db->Get(read_options, keys[index], &existing_value);
+                        if (!s_read.ok() && !s_read.IsNotFound()) {
+                            std::cerr << "RMW read failed: " << s_read.ToString() << std::endl;
+                        }
+                    }
+
+                    string value_data = generate_value(adgMod::value_size);
+                    Status s = db->Put(write_options, keys[index], value_data);
+                    if (s.ok()) write_count++;
+                    else cout << "Write failed: " << s.ToString() << endl;
+                    write_weight--;
+                }
+
+                if (read_weight == 0 && write_weight == 0) {
+                    read_weight = static_cast<int>(read_write_percent * 100);
+                    write_weight = 100 - read_weight;
+                }
+            }
+
+            auto end = std::chrono::high_resolution_clock::now();
+            // ******* END OF YCSB LOGIC *******
+
+            if (use_ycsb == 'e') {
+                cout << "\n[Workload E] Total scans: " << scan_count
+                    << " | Total inserts: " << insert_count
+                    << " | Total ops: " << (scan_count + insert_count) << endl;
+            } else {
+                cout << "\n[Workload " << use_ycsb << "] Total reads: " << read_count
+                    << " | Total writes: " << write_count
+                    << " | Total ops: " << (read_count + write_count) << endl;
+            }
+
+            auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+            double seconds = duration.count() / 1000000; 
+            double throughput = num_operations / seconds; 
+            if (adgMod::MOD == 7)
+                cout << "Bourbon: ";
+            else if (adgMod::MOD == 8)
+                cout << "Wisckey: ";
+            cout << "Operations: " << num_operations
+                    << ", Dataset: " << input_filename
+                    << ", Duration: " << seconds << " seconds"
+                    << ", Throughput: " << throughput/1000000 << " Mop/s" << std::endl;
+        }
 
             // if (pause) {
             //     if ((i + 1) % (num_operations / 10000) == 0) ::usleep(800000);
@@ -549,36 +677,7 @@ int main(int argc, char *argv[]) {
 
         // adgMod::learn_cb_model->Report();
         adgMod::db->WaitForBackground();
+        // delete db_iter;
         delete db;
     }
-
-
-    // for (int s = 0; s < times.size(); ++s) {
-    //     vector<uint64_t>& time = times[s];
-    //     vector<double> diff(time.size());
-    //     if (time.empty()) continue;
-
-    //     double sum = std::accumulate(time.begin(), time.end(), 0.0);
-    //     double mean = sum / time.size();
-    //     std::transform(time.begin(), time.end(), diff.begin(), [mean] (double x) { return x - mean; });
-    //     double stdev = std::sqrt(std::inner_product(diff.begin(), diff.end(), diff.begin(), 0.0) / time.size());
-
-    //     printf("Timer %d MEAN: %lu, STDDEV: %f\n", s, (uint64_t) mean, stdev);
-    // }
-
-    // if (num_iteration > 1) {
-    //     cout << "Data Without the First Item" << endl;
-    //     for (int s = 0; s < times.size(); ++s) {
-    //         vector<uint64_t>& time = times[s];
-    //         vector<double> diff(time.size() - 1);
-    //         if (time.empty()) continue;
-
-    //         double sum = std::accumulate(time.begin() + 1, time.end(), 0.0);
-    //         double mean = sum / (time.size() - 1);
-    //         std::transform(time.begin() + 1, time.end(), diff.begin(), [mean] (double x) { return x - mean; });
-    //         double stdev = std::sqrt(std::inner_product(diff.begin(), diff.end(), diff.begin(), 0.0) / time.size());
-
-    //         printf("Timer %d MEAN: %lu, STDDEV: %f\n", s, (uint64_t) mean, stdev);
-    //     }
-    // }
 }

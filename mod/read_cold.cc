@@ -29,50 +29,6 @@ using std::map;
 using std::ifstream;
 using std::string;
 
-class ZipfianGenerator {
-    private:
-        long min_;
-        long max_;
-        long items_;
-        double theta_;
-        double zetan_;
-        double alpha_;
-        double eta_;
-        double zeta2theta_;
-        std::mt19937 gen_;
-        std::uniform_real_distribution<double> dist_;
-    
-        double zeta(long st, long n) {
-            double sum = 0.0;
-            for (long i = st; i < n; i++) {
-                sum += 1.0 / std::pow(i + 1, theta_);
-            }
-            return sum;
-        }
-    
-    public:
-        ZipfianGenerator(long min, long max, double theta) 
-            : min_(min), max_(max), theta_(theta), 
-              gen_(62), dist_(0.0, 1.0) {
-            items_ = max_ - min_ + 1;
-            zeta2theta_ = zeta(0, 2);
-            zetan_ = zeta(0, items_);
-            alpha_ = 1.0 / (1.0 - theta_);
-            eta_ = (1 - std::pow(2.0/items_, 1 - theta_)) / (1 - zeta2theta_/zetan_);
-        }
-    
-        long next() {
-            double u = dist_(gen_);
-            double uz = u * zetan_;
-            
-            if (uz < 1.0) return min_;
-            if (uz < 1.0 + std::pow(0.5, theta_)) return min_ + 1;
-            
-            long ret = min_ + (long)(items_ * std::pow(eta_ * u - eta_ + 1, alpha_));
-            return std::min(std::max(ret, min_), max_);
-        }
-    };
-
 class NumericalComparator : public Comparator {
 public:
     NumericalComparator() = default;
@@ -127,7 +83,7 @@ enum LoadType {
 int main(int argc, char *argv[]) {
     int num_operations, num_iteration, num_mix;
     float test_num_segments_base;
-    float num_pair_step, read_write_percent, theta_zipfian;
+    float num_pair_step, read_write_percent;
     string db_location, profiler_out, input_filename, distribution_filename, ycsb_filename;
     bool print_single_timing, print_file_info, evict, unlimit_fd, use_distribution = false, pause;
     bool change_level_load, change_file_load, change_level_learning, change_file_learning;
@@ -311,12 +267,6 @@ int main(int argc, char *argv[]) {
                     }
                     break;
                 }
-                case Reversed: { 
-                    for (int i = keys.size() - 1; i >= 0; --i) {
-                        chunks.emplace_back(i, i + 1);
-                    }
-                    break;
-                }    
                 case ReversedChunk: {
                     for (int cut = cut_size - 1; cut >= 0; --cut) {
                         chunks.emplace_back(keys.size() * cut / cut_size, keys.size() * (cut + 1) / cut_size);

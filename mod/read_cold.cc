@@ -602,6 +602,15 @@ int main(int argc, char *argv[]) {
                     << ", Dataset: " << input_filename
                     << ", Duration: " << seconds << " seconds"
                     << ", Throughput: " << throughput/1000000 << " Mop/s" << std::endl;
+
+            std::ofstream ofile;
+            std::string output_path = "out/db_bench.csv";
+            ofile.open(output_path, std::ios_base::app);
+            if (adgMod::MOD == 7)
+                ofile << "Bourbon" << "," << input_filename << ",ycsbwkld" << use_ycsb << ",skip_list" << "," << num_operations << "," << num_threads << "," << seconds << "," << (long)throughput << "," <<  seconds/num_operations << "," << "" << "," << "" << std::endl;
+            else if (adgMod::MOD == 8)
+                ofile << "WiscKey" << "," << input_filename << ",ycsbwkld" << use_ycsb << ",skip_list" << "," << num_operations << "," << num_threads << "," << seconds << "," << (long)throughput << "," <<  seconds/num_operations << "," << "" << "," << "" << std::endl;
+                
         }
 
             // if (pause) {

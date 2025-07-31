@@ -511,6 +511,7 @@ int main(int argc, char *argv[]) {
                 write_weight = 100 - read_weight;
             }
 
+            std::unique_ptr<Iterator> it(db->NewIterator(read_options));
             auto start = std::chrono::high_resolution_clock::now();
             for (int i = 0; i < num_operations; ++i) {
                 long index = (use_ycsb == 'd' || use_ycsb == 'e')
@@ -521,7 +522,6 @@ int main(int argc, char *argv[]) {
                     if (scan_weight > 0) {
                         // ---- Short Range SCAN (counted as one operation) ----
                         int scan_length = (rand() % 100) + 1;
-                        std::unique_ptr<Iterator> it(db->NewIterator(read_options));
                         it->Seek(keys[index]);
                         int scanned = 0;
                         while (it->Valid() && scanned < scan_length) {

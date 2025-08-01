@@ -167,6 +167,12 @@ int main(int argc, char *argv[]) {
         data = new uint64_t[total_keys];
         is.read(reinterpret_cast<char*>(data), total_keys*sizeof(uint64_t));
         is.close();
+        std::cout << "Total keys read: " << total_keys << std::endl;
+        if (num_operations > total_keys) {
+        std::cerr << "Error: Requested num_operations (" << num_operations
+              << ") exceeds number of keys in file (" << total_keys << ")." << std::endl;
+        num_operations = total_keys;
+}
 
         for (int i = 0; i < num_operations; ++i) 
             keys.push_back(generate_key(to_string(data[i])));
@@ -476,7 +482,7 @@ int main(int argc, char *argv[]) {
             cout << "Operations: " << num_operations
                     << ", Dataset: " << input_filename
                     << ", Duration: " << seconds << " seconds"
-                    << ", Throughput: " << throughput/1000000 << " Mop/s" << std::endl;
+                    << ", Throughput: " << throughput << " op/s" << std::endl;
         }
 
         else {

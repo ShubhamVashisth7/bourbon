@@ -178,19 +178,16 @@ int main(int argc, char *argv[]) {
             keys.push_back(generate_key(to_string(data[i])));
         adgMod::key_size = (int) keys.front().size();
 
-        keys.resize(num_operations);
-        cout << "Shuffling keys" << endl;
-        std::random_device rd;
-        std::mt19937 g(rd());
-        shuffle(keys.begin(), keys.end(), g);
-
         cout << "Sample keys: ";
-        for (int i = 0; i < 5; ++i)
+        for (int i = 0; i < 3; ++i)
             cout << keys[i] << " ";
         cout << endl;
 
+        keys.resize(num_operations);
+        std::random_device rd;
+        std::mt19937 g(rd());
+        shuffle(keys.begin(), keys.end(), g);
         
-
     } else {
         std::uniform_int_distribution<uint64_t> udist_key(0, 999999999999999);
         for (int i = 0; i < 10000000; ++i) {
@@ -598,6 +595,7 @@ int main(int argc, char *argv[]) {
             }
 
             auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end - start);
+            adgMod::db->WaitForBackground();
             double seconds = duration.count() / 1000000; 
             double throughput = num_operations / seconds; 
             if (adgMod::MOD == 7)

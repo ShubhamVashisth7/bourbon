@@ -86,7 +86,7 @@ int main(int argc, char *argv[]) {
     float num_pair_step, read_write_percent;
     string db_location, profiler_out, input_filename, distribution_filename, ycsb_filename;
     bool print_single_timing, print_file_info, evict, unlimit_fd, use_distribution = false, pause;
-    bool change_level_load, change_file_load, change_level_learning, change_file_learning;
+    bool change_level_load, change_file_load, change_level_learning, change_file_learning, ycsb_uniform = false;
     int load_type, insert_bound, length_range, num_threads, seed;
     string db_location_copy;
     char use_ycsb;
@@ -127,7 +127,8 @@ int main(int argc, char *argv[]) {
             ("range", "use range query and specify length", cxxopts::value<int>(length_range)->default_value("0"))
             ("t,threads", "threads", cxxopts::value<int>(num_threads)->default_value("16"))
             ("use_ycsb", "run ycsb workloads (a,b,c,d,e,f)", cxxopts::value<char>(use_ycsb)->default_value("0"))
-            ("seed", "random ssed", cxxopts::value<int>(seed)->default_value("62"));
+            ("seed", "random ssed", cxxopts::value<int>(seed)->default_value("62")) 
+            ("YCSB_uniform_distribution", "use uniform distribution in YCSB", cxxopts::value<bool>(ycsb_uniform)->default_value("false"));
 
     auto result = commandline_options.parse(argc, argv);
     if (result.count("help")) {
@@ -489,8 +490,10 @@ int main(int argc, char *argv[]) {
             int read_count = 0, write_count = 0;
             int scan_count = 0, insert_count = 0; // For Workload E only
 
-            init_zipf_generator(0, keys.size());
-
+            std::uniform_int_distribution<long> uniform_dist_ycsb(0, keys.size() - 1);
+            
+            if (!ycsb_uniform) 
+                init_zipf_generator(0, keys.size());
    
             if (use_ycsb == 'd' || use_ycsb == 'e') {
                 init_latestgen(keys.size());
@@ -517,10 +520,16 @@ int main(int argc, char *argv[]) {
             std::unique_ptr<Iterator> it(db->NewIterator(read_options));
             auto start = std::chrono::high_resolution_clock::now();
             for (int i = 0; i < num_operations; ++i) {
-                long index = (use_ycsb == 'd' || use_ycsb == 'e')
-                    ? (next_value_latestgen() % keys.size())
-                    : (nextValue() % keys.size());
-
+                long index;
+                if (ycsb_uniform) {
+                    // index = rand_uniform.Next() % num_operations;
+                    index = uniform_dist_ycsb(e1) % keys.size();
+                }
+                else {
+                    index = (use_ycsb == 'd' || use_ycsb == 'e')
+                        ? (next_value_latestgen() % keys.size())
+                        : (nextValue() % keys.size());
+                }        
                 if (use_ycsb == 'e') {
                     if (scan_weight > 0) {
                         // ---- Short Range SCAN (counted as one operation) ----
@@ -607,13 +616,19 @@ int main(int argc, char *argv[]) {
                     << ", Duration: " << seconds << " seconds"
                     << ", Throughput: " << throughput/1000000 << " Mop/s" << std::endl;
 
+            
+            std::string distribution;
+            if (ycsb_uniform) 
+                distribution = "uniform";
+            else 
+                distribution = "zipfian";
             std::ofstream ofile;
             std::string output_path = "out/db_bench.csv";
             ofile.open(output_path, std::ios_base::app);
             if (adgMod::MOD == 7)
-                ofile << "Bourbon" << "," << input_filename << ",ycsbwkld" << use_ycsb << ",skip_list" << "," << num_operations << "," << num_threads << "," << seconds << "," << (long)throughput << "," <<  seconds/num_operations << "," << "" << "," << "" << std::endl;
+                ofile << "Bourbon" << "," << input_filename << ",ycsbwkld" << use_ycsb << "," << distribution << ",skip_list" << "," << num_operations << "," << num_threads << "," << seconds << "," << (long)throughput << "," <<  seconds/num_operations << "," << "" << "," << "" << std::endl;
             else if (adgMod::MOD == 8)
-                ofile << "WiscKey" << "," << input_filename << ",ycsbwkld" << use_ycsb << ",skip_list" << "," << num_operations << "," << num_threads << "," << seconds << "," << (long)throughput << "," <<  seconds/num_operations << "," << "" << "," << "" << std::endl;
+                ofile << "WiscKey" << "," << input_filename << ",ycsbwkld" << use_ycsb << "," << distribution << ",skip_list" << "," << num_operations << "," << num_threads << "," << seconds << "," << (long)throughput << "," <<  seconds/num_operations << "," << "" << "," << "" << std::endl;
                 
         }
 
